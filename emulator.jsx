@@ -135,7 +135,7 @@ function compileCart(source, api) {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function MDCEmulator() {
+function MDCEmulator() {
   const canvasRef = useRef(null);
   const [code, setCode]       = useState(EXAMPLE);
   const [running, setRunning] = useState(false);
@@ -545,3 +545,6 @@ export default function MDCEmulator() {
     </div>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(MDCEmulator));
