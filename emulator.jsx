@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+const { useState, useEffect, useRef } = React;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const W = 128, H = 64, SCALE = 4;
