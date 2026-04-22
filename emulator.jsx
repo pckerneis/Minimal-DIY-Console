@@ -193,12 +193,12 @@ function MDCEmulator() {
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => {
-      for (let i = 0; i < 6; i++) prev[i] = btns[i];
       try {
         cart.current?.update(fn.current, 0);
         cart.current?.draw(fn.current, 0);
         blit();
         fn.current++;
+        for (let i = 0; i < 6; i++) prev[i] = btns[i];
       } catch (e) {
         setError(e.message || String(e));
         setRunning(false);
