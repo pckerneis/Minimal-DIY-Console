@@ -1,18 +1,21 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <title>MDC Emulator</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-</head>
+<body style="margin:0;background:black;color:white;font-family:monospace;">
 
-<body style="margin:0; background:#000;">
-  <div id="root"></div>
+<div id="root">BOOTING...</div>
 
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  document.getElementById("root").innerHTML =
+      "ERROR:\n" + msg + "\n" + line + ":" + col;
+      };
+</script>
 
-  <script type="text/babel" src="./emulator.jsx"></script>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" src="./emulator.jsx"></script>
+
 </body>
 </html>
