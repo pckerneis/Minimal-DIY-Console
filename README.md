@@ -12,7 +12,7 @@ The philosophy is to serve as a creative and educational platform for creating a
 
 ## Example cart
 
-´´´
+```
 init() {
   // ball
   bx = 64
@@ -71,7 +71,7 @@ draw() {
   rectfill(122, ey, 4, 10, 1) // enemy
   rectfill(bx, by, 2, 2, 1) // ball
 }
-´´´
+```
 
 ## Program structure
 
@@ -99,7 +99,7 @@ Variables are globally accessible and created on first assignment with ´=´.
 
 Builtin functions:
 
-´´´
+```
 // input
 btn(i) // is button pressee
 btnp(i) // pressed this frame
@@ -110,8 +110,7 @@ pset(x, y, c) // set a pixel
 rectfill(x, y, w, h, c) // filled rectangle
 line(x0, y0, x0, y1, c) // line
 print(x, y, string) // draw text
-
-´´´
+```
 
 ### Input
 
