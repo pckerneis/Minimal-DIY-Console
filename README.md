@@ -76,10 +76,10 @@ draw() {
 ## Program structure
 
 A cart defines up to four functions:
-- ´init()´ runs once at start
-- ´update(frame, input)´ 30 times per second
-- ´draw(frame, input)´ 30 times per second
-- ´audio(t)´ 22050 times per second
+- `init()` runs once at start
+- `update(frame, input)` 30 times per second
+- `draw(frame, input)` 30 times per second
+- `audio(t)` 22050 times per second
 
 ## API & Scripting
 
@@ -87,15 +87,15 @@ A cart defines up to four functions:
 
 Supports integer-only math with 32 bit wraparound. Supported operators:
 
-´´´
+```
 + - * / %
 > < >= <= ==
 & | ^ >> <<
-´´´
+```
 
 ### Variables
 
-Variables are globally accessible and created on first assignment with ´=´.
+Variables are globally accessible and created on first assignment with `=`.
 
 Builtin functions:
 
@@ -115,16 +115,16 @@ print(x, y, string) // draw text
 ### Input
 
 Buttons are represented as integers:
-- ´0´: left
-- ´1´: right
-- ´2´: up
-- ´3´: down
-- ´4´: A
-- ´5´: B
+- `0`: left
+- `1`: right
+- `2`: up
+- `3`: down
+- `4`: A
+- `5`: B
 
 ### Strings
 
-Strings represent text. They are delimited by double quotes (´"´) and contain ASCII characters (32-127 range) or escape sequences:
-- ´//´ represents char ´/´
-- ´/"´ represents char ´"´
+Strings represent text. They are delimited by double quotes (`"`) and contain ASCII characters (32-127 range) or escape sequences:
+- `//` represents char `/`
+- `/"` represents char `"`
 
