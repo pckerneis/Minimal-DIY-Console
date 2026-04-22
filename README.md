@@ -97,7 +97,9 @@ Supports integer-only math with 32 bit wraparound. Supported operators:
 
 Variables are globally accessible and created on first assignment with `=`.
 
-Builtin functions:
+Shortcuts available: `-=`, `+=`, `*=` and `/=`.
+
+### Builtin functions
 
 ```
 // input
