@@ -345,18 +345,27 @@ Structure:
 
 ### 4.7 Distribution & Flashing
 
-Carts are distributed as compiled binary files and flashed to the device alongside the firmware via USB.
+Firmware and carts are deployed separately via two distinct mechanisms.
 
-**Flashing model:**
-- The device exposes a USB mass storage interface when connected to a host (standard Pico UF2 behaviour).
-- The host flashes a single UF2 image containing both the firmware and one or more compiled cart files packed into a defined region of flash.
-- 🔲 _TBD — flash memory layout: firmware region size, cart storage region start address, max number of carts, cart slot size._
-- 🔲 _TBD — on-device cart selection UI (menu at boot? dedicated button combination?)._
+**Firmware flashing (BOOTSEL mode):**
+- To flash a new firmware version, hold the BOOTSEL button on the Pico while connecting it via USB.
+- The device appears as a USB mass storage drive on the host.
+- Drop the firmware `.uf2` file onto the drive. The device reboots automatically and runs the new firmware.
+- This step is only required when updating the runtime itself, not when installing carts.
+
+**Cart installation (storage mode):**
+- When connected via USB during normal operation (no BOOTSEL), the device exposes a USB mass storage interface listing the cart storage region of flash as a drive.
+- Users drag and drop compiled cart files onto this drive.
+- 🔲 *TBD — maximum number of cart slots and per-slot size in flash.*
+- On the next boot (or immediately, 🔲 *TBD*), the runtime scans the storage region and makes available all valid compiled carts it finds.
+
+**On-device cart selection:**
+- 🔲 *TBD — on-device cart selection UI (boot menu, dedicated button combination, or single-cart-only in v1).*
 
 **Tooling:**
-- The reference compiler takes a `.cart` source file and produces a compiled binary.
-- A packaging tool combines the firmware UF2 and one or more compiled carts into a single flashable image.
-- 🔲 _TBD — whether these are separate tools or a single CLI._
+- The reference compiler takes a `.cart` source file and produces a compiled cart binary.
+- No packaging step is required to combine firmware and carts — they are deployed independently.
+- 🔲 *TBD — whether the compiler is a standalone CLI or integrated into a web-based editor.*
 
 ---
 
