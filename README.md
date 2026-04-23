@@ -139,6 +139,7 @@ Strings represent text. They are delimited by double quotes (`"`) and contain AS
 - 6 tact switch
 - 128x64 display (OLED or LCD)
 - 1W 8ohm speaker or 3.5mm Jack female connector
+- Breadboard and jumper wires
 
 ## TODO V1
 
@@ -151,4 +152,5 @@ Strings represent text. They are delimited by double quotes (`"`) and contain AS
 - Enclosure design
 - Community forum
 - Cartridges sharing platform
+- Build and BOM sharing platform
 
