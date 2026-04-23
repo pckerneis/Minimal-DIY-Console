@@ -112,6 +112,9 @@ pset(x, y, c) // set a pixel
 rectfill(x, y, w, h, c) // filled rectangle
 line(x0, y0, x0, y1, c) // line
 print(x, y, string) // draw text
+
+// state persistence
+// todo
 ```
 
 ### Input
@@ -129,4 +132,23 @@ Buttons are represented as integers:
 Strings represent text. They are delimited by double quotes (`"`) and contain ASCII characters (32-127 range) or escape sequences:
 - `//` represents char `/`
 - `/"` represents char `"`
+
+## Minimal BOM
+
+- Raspberry Pi Pico
+- 6 tact switch
+- 128x64 display (OLED or LCD)
+- 1W 8ohm speaker or 3.5mm Jack female connector
+
+## TODO V1
+
+- Specs
+- RPI Pico prototype
+- Reference compiler
+- Web emulator
+- RPI Pico build instructions
+- PCB files
+- Enclosure design
+- Community forum
+- Cartridges sharing platform
 
