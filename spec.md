@@ -260,7 +260,45 @@ No dedicated audio built-ins are planned for v1. Audio synthesis is expected to 
 
 ### 3.6 Persistence
 
-🔲 _TBD — save/load functions for persisting state across sessions. Likely a small fixed-size key/value store._
+Each cart has a dedicated save block of **4 × 32-bit integer slots**, persisted to flash and identified by the cart's `@id` metadata field.
+
+**API:**
+
+```
+save(slot, value)   // write integer value to slot [0–3]
+load(slot)          // read slot [0–3]; returns 0 if never written or slot is out of range
+```
+
+- `slot` must be an integer in [0–3].
+- `save()` with an out-of-range slot is a silent no-op.
+- `load()` with an out-of-range slot returns `0`.
+- Values are 32-bit signed integers, consistent with the rest of the language.
+
+**Cart identity:**
+
+Each cart must declare a unique ID in its metadata block:
+
+```
+// @id my-cart-v1
+```
+
+- The runtime uses `@id` to locate the cart's save block in flash.
+- If `@id` is absent and `save()` or `load()` are called, the compiler emits a warning and persistence is disabled at runtime.
+- Duplicate `@id` values across carts result in shared save data — the author is responsible for uniqueness.
+
+**Storage layout:**
+
+With a maximum of 32 cart slots and 4 × 4-byte values each, total save data is **512 bytes**, fitting within a single 4 KB flash erase page. One page is dedicated exclusively to save data, laid out as a flat array of 32 entries of 16 bytes each, indexed by a hash of `@id`.
+
+**Flash write strategy:**
+
+`save()` writes to a RAM mirror immediately. The mirror is flushed to flash on:
+
+- **Cart exit** (switching to another cart via the on-device menu)
+- **Graceful shutdown** (soft reset or power button, if available)
+- **USB connect** (before the storage interface is mounted, to avoid flash contention)
+
+Power loss between a `save()` call and a flush will result in the last unsaved values being lost. This is acceptable for v1.
 
 ---
 
@@ -522,7 +560,6 @@ A consolidated list of decisions that need to be made before this spec is consid
 
 | # | Section | Question |
 |---|---|---|
-| 4 | 3.6 | Persistence API design |
 | 5 | 4.1 | File extension for source and compiled carts |
 | 6 | 4.5 | Max cart source size |
 | 7 | 4.6 | Opcode set design (stack vs register machine, instruction width) |
