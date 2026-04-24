@@ -156,7 +156,7 @@ for (i = 0; i < 10; i += 1) {
 - Concatenation uses the `+` operator: `"hello" + " " + "world"` → `"hello world"`
 - `len(s)` returns the length of string `s` as an integer.
 - `char(s, i)` returns the character at index `i` (0-based) as a single-character string. Returns `""` if `i` is out of bounds.
-- 🔲 _TBD: Maximum string length._
+- Maximum length of 128 characters. Extra characters are discarded.
 
 ### 2.9 Comments
 
@@ -257,8 +257,6 @@ rnd(n)           → integer   // random integer in [0, n−1]
 ### 3.5 Audio Utilities
 
 No dedicated audio built-ins are planned for v1. Audio synthesis is expected to be done using integer math directly inside `audio(t)`. The math utility functions (`abs`, `min`, `max`, etc.) are available inside `audio(t)`.
-
-🔲 _TBD — additional waveform helpers may be added if common patterns prove too verbose._
 
 ### 3.6 Persistence
 
@@ -411,7 +409,7 @@ The runtime targets **30 frames per second**. Each frame:
 
 🔲 _TBD. Example:_
 - **Parse error at boot:** Display error message with line number; halt.
-- **Runtime error (e.g. division by zero):** 🔲 _TBD — halt, display error, or continue with defined fallback value._
+- **Runtime error:** Display error message with call stack and line number; halt.
 - **Stack overflow:** 🔲 _TBD._
 
 ### 5.5 Display
@@ -510,9 +508,6 @@ A consolidated list of decisions that need to be made before this spec is consid
 
 | # | Section | Question |
 |---|---|---|
-| 1 | 2.8 | Maximum string length |
-| 2 | 3.4 | `clamp()`, `rnd()` and other math utilities |
-| 3 | 3.5 | Audio waveform helpers |
 | 4 | 3.6 | Persistence API design |
 | 5 | 4.1 | File extension for source and compiled carts |
 | 6 | 4.5 | Max cart source size |
