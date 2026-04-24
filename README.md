@@ -117,7 +117,8 @@ The console uses a minimal scripting language with a syntax close to JavaScript.
 
 ```
 + - * / %          arithmetic
-> < >= <= ==       comparison
+&& ||              boolean logic
+> < >= <= == !=    comparison
 & | ^ >> <<        bitwise
 ```
 
@@ -209,7 +210,7 @@ Wiring instructions and a PCB layout are on the roadmap. A breadboard prototype 
 
 | Item | Status |
 |---|---|
-| Language specification | 📋 Planned |
+| Language specification | 🟦 In progress |
 | Raspberry Pi Pico prototype | 📋 Planned |
 | Reference compiler / interpreter | 📋 Planned |
 | Web emulator | 📋 Planned |
