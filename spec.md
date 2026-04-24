@@ -448,7 +448,21 @@ Maximum **64 global variables** per cart. Each variable stores either a 32-bit i
 
 ### 6.3 String Storage
 
-🔲 _TBD — maximum string length. Suggested: 255 characters. Whether strings are interned or stack-allocated._
+All strings in a cart are **literals known at compile time**. The compiler collects every unique string literal from the source and stores them in a **string table** embedded in the compiled cart binary. At runtime, string values are references into this table — no heap allocation occurs.
+- **Maximum string length:** 128 characters. Literals exceeding this limit are silently truncated to their first 128 characters at compile time.
+- **Maximum unique string literals per cart:** 32. The compiler errors if this limit is exceeded.
+- **Concatenation:** The + operator and char() produce new strings at runtime. Results are capped at 128 characters; excess characters are discarded.
+
+**Runtime string allocation — scratch buffer:**
+
+Runtime-produced strings are allocated from a **fixed scratch buffer**: a small pool of slots (e.g. 8 × 128 bytes) managed as a stack. This approach is recommended over runtime interning for three reasons:
+- Hardware fit: memory usage is static and fully predictable at compile time.
+- Implementation simplicity: no deduplication logic, no hash map, no table mutation at runtime.
+- Function call compatibility: if user-defined functions are added later, scratch slots can be scoped to the call frame and released automatically on return, with no GC or ref-counting required.
+
+The main constraint is that dynamic strings must not be held across frames or call boundaries. Given the current feature set this is acceptable, and can be enforced by convention or a future linting pass.
+
+🔲 TBD — exact number of scratch slots and eviction behaviour when the pool is exhausted (silent truncation, runtime error, or oldest-slot reuse).
 
 ### 6.4 Call Stack
 
