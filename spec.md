@@ -436,13 +436,31 @@ The runtime targets **30 frames per second**. Each frame:
 
 ### 5.3 Audio Callback
 
-`audio(t)` is called by the audio subsystem **22 050 times per second** (22.05 kHz sample rate).
+`audio(t)` is called by the audio subsystem running on **core 1**, 22 050 times per second (22.05 kHz sample rate).
 
 - `t` is the **absolute sample index** since boot, as a 32-bit integer. Wraps at 2³²−1 (~53 hours of audio).
 - The return value of `audio(t)` is the output sample as an **unsigned 8-bit integer in the range [0, 255]**. Values outside this range are clamped.
-- `audio(t)` runs in a separate context from the main loop. Cart global variables are accessible but modifications may race with `update()`.
-- 🔲 _TBD — define synchronisation guarantees, if any._
+- `audio(t)` may call math utility functions (`abs`, `min`, `max`, etc.) but may not call any graphics, input, or persistence built-ins.
+- `audio(t)` must not write to any global variable. This constraint is enforced by convention in v1; a compile-time check may be added later.
 
+**Global variable access — shadow copy:**
+
+`audio(t)` reads cart globals from a **shadow copy** of the live variable table, not the live table itself. This gives audio a fully consistent end-of-frame snapshot with no risk of torn reads.
+
+- The runtime maintains **two shadow buffers** (A and B), each 256 bytes (64 variables × 4 bytes).
+- After each `draw()` call completes, the runtime writes the current live variable table into the inactive buffer, then atomically flips the active buffer index.
+- Core 1 always reads from the buffer indicated by the active index. It never sees a partially written snapshot.
+- A global variable written in `update()` will be visible to `audio(t)` at the start of the next frame — a maximum latency of one frame (~33ms). This is acceptable for reactive audio.
+
+**Core assignment:**
+
+| Core | Responsibilities |
+|---|---|
+| Core 0 | Main loop: `init()`, `update()`, `draw()`, display flush, USB, input polling |
+| Core 1 | Audio callback: `audio(t)`, DAC/PWM output |
+
+🔲 *TBD — define behaviour if `audio(t)` execution exceeds one sample period (i.e. takes longer than ~45µs). Options: output silence for the overrun sample, repeat the previous sample, or halt with a runtime error.*
+ 
 ### 5.4 Error Handling
 
 🔲 _TBD. Example:_
@@ -565,7 +583,6 @@ A consolidated list of decisions that need to be made before this spec is consid
 | 7 | 4.6 | Opcode set design (stack vs register machine, instruction width) |
 | 8 | 4.7 | Flash memory layout; cart slot size; on-device cart selection UI |
 | 9 | 5.2 | `input` argument encoding; overrun behaviour |
-| 10 | 5.3 | Audio synchronisation guarantees |
 | 11 | 5.4 | Runtime error behaviour |
 | 12 | 6.1 | Full SRAM allocation |
 | 13 | 6.3 | String storage strategy and maximum string length |
