@@ -300,6 +300,18 @@ With a maximum of 32 cart slots and 4 × 4-byte values each, total save data is 
 
 Power loss between a `save()` call and a flush will result in the last unsaved values being lost. This is acceptable for v1.
 
+### 3.7 Cart utilities
+
+Cart Utilities allow to inspect and load available cart files. This allows multi-cart programs or cart loaders. The default cart loader is built with this API.
+
+**API:**
+
+```
+cartcount()         // number of available cart files
+cartmeta(i, field)  // returns the string value of the requested metadata field or empty string for invalid cart index or non-existent field
+loadcart(i)         // if cart at index exists, exit current cart and load the requested cart; returns 0 otherwise
+```
+
 ---
 
 ## 4. Cartridge Format
@@ -414,11 +426,12 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 On power-on or reset:
 
 1. Runtime initialises display, input, and audio subsystems.
-2. Cart source is loaded and parsed.
-3. On parse error: 🔲 _TBD — display error message, halt, or reset._
-4. Global variable table is initialised (empty).
-5. `init()` is called once, if defined.
-6. Main loop begins.
+2. If a cart named "boot.ccard" exists, load it. Else load built-in cart loader.
+3. Cart source is loaded and parsed.
+4. On parse error: 🔲 _TBD — display error message, halt, or reset._
+5. Global variable table is initialised (empty).
+6. `init()` is called once, if defined.
+7. Main loop begins.
 
 ### 5.2 Main Loop
 
