@@ -342,6 +342,8 @@ Defined keys:
 | `author` | string | Author name or handle |
 | `version` | string | Semantic version (e.g. `1.0.0`) |
 | `desc` | string | Short description (one line) |
+| `id` | string | ID used for state persistence |
+
 
 Example:
 
