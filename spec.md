@@ -63,8 +63,10 @@ break_stmt   := 'break'
 continue_stmt := 'continue'
 call_stmt    := IDENT '(' arglist ')'
 block        := '{' statement* '}'
-expr         := logical ( ('&&' | '||') logical )*
-logical      := comparison ( ('&' | '|' | '^') comparison )*
+expr         := bitor ( ('&&' | '||') bitor )*
+bitor        := bitxor ( '|' bitxor )*
+bitxor       := bitand ( '^' bitand )*
+bitand       := comparison ( '&' comparison )*
 comparison   := shift ( ('==' | '!=' | '>' | '<' | '>=' | '<=') shift )*
 shift        := additive ( ('>>' | '<<') additive )*
 additive     := multiplicative ( ('+' | '-') multiplicative )*
@@ -99,12 +101,14 @@ From highest to lowest:
 
 | Precedence | Operators | Associativity |
 |---|---|---|
-| 7 | Unary `-` | Right |
-| 6 | `*` `/` `%` | Left |
-| 5 | `+` `-` | Left |
-| 4 | `>>` `<<` | Left |
-| 3 | `>` `<` `>=` `<=` `==` `!=` | Left |
-| 2 | `&` `\|` `^` | Left |
+| 9 | Unary `-` | Right |
+| 8 | `*` `/` `%` | Left |
+| 7 | `+` `-` | Left |
+| 6 | `>>` `<<` | Left |
+| 5 | `>` `<` `>=` `<=` `==` `!=` | Left |
+| 4 | `&` | Left |
+| 3 | `^` | Left |
+| 2 | `\|` | Left |
 | 1 | `&&` `\|\|` | Left |
 
 `&&` and `||` are short-circuit operators: the right-hand side is not evaluated if the result is determined by the left-hand side.
@@ -113,7 +117,7 @@ From highest to lowest:
 
 - All variables are global.
 - A variable is created on its first assignment.
-- Reading an uninitialised variable returns `0` (integer) or `""` (if a string is expected). In practice, all uninitialised variables default to `0`.
+- All uninitialised variables default to `0`.
 - Variable names: ASCII letters, digits, and `_`; must start with a letter or `_`.
 - Maximum of **64 simultaneous global variables** per cart.
 
@@ -237,7 +241,7 @@ Draw a line from `(x0, y0)` to `(x1, y1)`.
 ```
 print(x, y, string)
 ```
-Render `string` starting at pixel `(x, y)`.
+Render `string` starting at pixel `(x, y)` on a single line (no text wrap and no line breaks).
 
 - Font: **Monogram** by Datagoblin. Glyph cell is 5×5px for lowercase, with a 2px ascender zone and 2px descender zone, giving a full character height of 9px. Full ASCII printable range supported.
 - Characters rendered outside screen bounds are silently clipped.
@@ -534,7 +538,7 @@ Maximum **64 global variables** per cart. Each variable stores either a 32-bit i
 
 ### 6.3 String Storage
 
-All strings in a cart are **literals known at compile time**. The compiler collects every unique string literal from the source and stores them in a **string table** embedded in the compiled cart binary. At runtime, string values are references into this table — no heap allocation occurs.
+All string literals in a cart are known at compile time. The compiler collects every unique string literal from the source and stores them in a **string table** embedded in the compiled cart binary. At runtime, string values are references into this table — no heap allocation occurs.
 - **Maximum string length:** 128 characters. Literals exceeding this limit are silently truncated to their first 128 characters at compile time.
 - **Maximum unique string literals per cart:** 32. The compiler errors if this limit is exceeded.
 - **Concatenation:** The + operator and char() produce new strings at runtime. Results are capped at 128 characters; excess characters are discarded.
@@ -611,7 +615,7 @@ A consolidated list of decisions that need to be made before this spec is consid
 | 6 | 4.5 | Max cart source size |
 | 7 | 4.6 | Opcode set design (stack vs register machine, instruction width) |
 | 8 | 4.7 | Flash memory layout; cart slot size; on-device cart selection UI |
-| 9 | 5.2 | ~~`input` argument encoding~~ bitfield, bit `i` = button `i` ✅; overrun behaviour 🔲 |
+| 9 | 5.2 | Overrun behaviour |
 | 11 | 5.4 | Runtime error behaviour |
 | 12 | 6.1 | Full SRAM allocation |
 | 13 | 6.3 | String storage strategy and maximum string length |
