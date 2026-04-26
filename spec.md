@@ -409,11 +409,13 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 **Cart installation (storage mode):**
 - When connected via USB during normal operation (no BOOTSEL), the device exposes a USB mass storage interface listing the cart storage region of flash as a drive.
 - Users drag and drop compiled cart files onto this drive.
-- 🔲 *TBD — maximum number of cart slots and per-slot size in flash.*
-- On the next boot (or immediately, 🔲 *TBD*), the runtime scans the storage region and makes available all valid compiled carts it finds.
+- A maximum of 32 carts can be installed at once.
+- On the next boot, the runtime scans the storage region and makes available all valid compiled carts it finds.
 
 **On-device cart selection:**
-- 🔲 *TBD — on-device cart selection UI (boot menu, dedicated button combination, or single-cart-only in v1).*
+- The runtime ships with a built-in cart selector that lists all valid `.bdbin` carts found in storage. The user navigates and launches a cart from this screen.
+- The built-in selector is the default boot experience. It can be replaced by placing a custom `boot.bdbin` in cart storage (see §5.1).
+- There is no button combination to return to the boot cart while a cart is running. A cart returns to the selector only by calling `loadcart()` with the appropriate index, or via a hardware reset.
 
 **Tooling:**
 - The reference compiler takes a `.bdcart` source file and produces a `.bdbin` compiled cart binary.
