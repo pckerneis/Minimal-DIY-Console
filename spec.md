@@ -1,7 +1,7 @@
-# Minimal DIY Console — Technical Specification
+# Bidule 01 — Technical Specification
 
 > **Status: Draft / Work in Progress**
-> This document is the authoritative specification for the Minimal DIY Console platform.
+> This document is the authoritative specification for the Bidule 01 platform.
 > Sections marked 🔲 are placeholders pending design decisions.
 > Sections marked ✅ are considered stable.
 

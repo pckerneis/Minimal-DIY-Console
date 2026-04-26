@@ -1,8 +1,8 @@
-# Minimal DIY Console
+# Bidule 01
 
 > A tiny, open, DIY platform for making games, art, and apps — from hardware to software.
 
-Minimal DIY Console is a creative and educational fantasy console designed to run on minimal hardware (a Raspberry Pi Pico). It pairs a monochrome 128×64 screen, 6-button input, and procedural audio with an intentionally small scripting language, so that a single person can understand and build the entire stack.
+Bidule 01 is a creative and educational fantasy console designed to run on minimal hardware (a Raspberry Pi Pico). It pairs a monochrome 128×64 screen, 6-button input, and procedural audio with an intentionally small scripting language, so that a single person can understand and build the entire stack.
 
 The constraints are the point: no floats, no sprites, no assets — just code, pixels, and sound.
 
@@ -27,7 +27,7 @@ The constraints are the point: no floats, no sprites, no assets — just code, p
 
 Most creative tools hide their complexity. This one doesn't.
 
-Minimal DIY Console is designed so that a curious person — a student, a hobbyist, a tinkerer — can trace every part of the system: the hardware schematic, the interpreter, the draw loop, and the audio callback. Building something on it means understanding it.
+Bidule 01 is designed so that a curious person — a student, a hobbyist, a tinkerer — can trace every part of the system: the hardware schematic, the interpreter, the draw loop, and the audio callback. Building something on it means understanding it.
 
 Constraints are deliberate:
 - **128×64 monochrome display** — forces spatial thinking
@@ -294,7 +294,7 @@ Please open an issue before starting significant work so we can coordinate.
 
 ## Prior art
 
-Minimal DIY Console draws direct inspiration from:
+Bidule 01 draws direct inspiration from:
 
 - [PICO-8](https://www.lexaloffle.com/pico-8.php) — the original fantasy console
 - [TIC-80](https://tic80.com/) — open-source fantasy computer
