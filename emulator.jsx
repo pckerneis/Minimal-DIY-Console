@@ -470,7 +470,7 @@ function MDCEmulator() {
 
         {/* Top bar */}
         <div style={s.topBar}>
-          <span style={s.brand}>Minimal DIY Console</span>
+          <span style={s.brand}>Bidule 01</span>
           <div style={s.dots}>
             {["#ff5555","#ffaa33","#44cc44"].map((c, i) => (
               <div key={i} style={{ width:7, height:7, borderRadius:"50%", background:c, opacity:.22 }} />
