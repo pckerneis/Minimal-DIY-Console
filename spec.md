@@ -318,7 +318,10 @@ loadcart(i)         // if cart at index exists, exit current cart and load the r
 
 ### 4.1 File Extension
 
-🔲 _TBD_
+| Format | Extension |
+|---|---|
+| Source cart | `.bdcart` |
+| Compiled cart | `.bdbin` |
 
 ### 4.2 Encoding
 
@@ -380,7 +383,7 @@ Unknown `@keys` are ignored by the runtime.
 
 The compiled format is a binary file produced by the reference compiler from a source cart.
 
-**File extension:** 🔲 _TBD — candidates: `.bin`, `.cbin`, `.cco` (compiled cart opcodes)._
+**File extension:** `.bdbin`
 
 Structure:
 
@@ -413,7 +416,7 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 - 🔲 *TBD — on-device cart selection UI (boot menu, dedicated button combination, or single-cart-only in v1).*
 
 **Tooling:**
-- The reference compiler takes a `.cart` source file and produces a compiled cart binary.
+- The reference compiler takes a `.bdcart` source file and produces a `.bdbin` compiled cart binary.
 - No packaging step is required to combine firmware and carts — they are deployed independently.
 - 🔲 *TBD — whether the compiler is a standalone CLI or integrated into a web-based editor.*
 
@@ -426,12 +429,11 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 On power-on or reset:
 
 1. Runtime initialises display, input, and audio subsystems.
-2. If a cart named "boot.ccard" exists, load it. Else load built-in cart loader.
-3. Cart source is loaded and parsed.
-4. On parse error: 🔲 _TBD — display error message, halt, or reset._
-5. Global variable table is initialised (empty).
-6. `init()` is called once, if defined.
-7. Main loop begins.
+2. Attempt to load and validate `boot.bdbin` from cart storage.
+3. If load or validation fails, display an error message and prompt: _"Press any key to load built-in boot cart."_ Wait for any button press, then load the built-in cart loader instead.
+4. Global variable table is initialised (empty).
+5. `init()` is called once, if defined.
+6. Main loop begins.
 
 ### 5.2 Main Loop
 
@@ -443,8 +445,19 @@ The runtime targets **30 frames per second**. Each frame:
 4. Flush display buffer to screen.
 5. Increment `frame` counter.
 
-**`frame`** is a 32-bit unsigned integer incrementing by 1 each frame. Wraps at 2³²−1.  
-**`input`** 🔲 _TBD — is input passed as an argument or only accessible via `btn()`/`btnp()`?_
+**`frame`** is a 32-bit signed integer incrementing by 1 each frame. It wraps from 2³¹−1 (2 147 483 647) back to −2 147 483 648 on overflow. At 30 fps this takes ~828 days, but carts that test `frame > N` or use `frame` in arithmetic should be aware of this wrap.  
+**`input`** is a bitfield integer representing the currently held buttons. Bit `i` is set if button `i` is held, matching the indices defined in §3.2:
+
+| Bit | Button |
+|---|---|
+| 0 | Left |
+| 1 | Right |
+| 2 | Up |
+| 3 | Down |
+| 4 | A |
+| 5 | B |
+
+Example: `input & 1` tests Left; `input & 16` tests A. `btn()` and `btnp()` remain available as a convenience API on top of this bitfield.
 
 **Overrun behaviour:** If `update()` + `draw()` take longer than one frame period:  
 🔲 _TBD — skip draw, drop frame, or run as fast as possible?_
@@ -555,7 +568,7 @@ The main constraint is that dynamic strings must not be held across frames or ca
 ### 7.2 Display
 
 - Resolution: 128 × 64 pixels, monochrome
-- Interface: 🔲 _TBD — SPI or I²C. Recommend SPI for speed._
+- Interface: SPI or I²C are both supported. SPI is recommended for speed.
 - Compatible controllers: SSD1306 (OLED), ST7565 (LCD)
 - Pinout: 🔲 _TBD_
 
@@ -593,15 +606,13 @@ A consolidated list of decisions that need to be made before this spec is consid
 
 | # | Section | Question |
 |---|---|---|
-| 5 | 4.1 | File extension for source and compiled carts |
 | 6 | 4.5 | Max cart source size |
 | 7 | 4.6 | Opcode set design (stack vs register machine, instruction width) |
 | 8 | 4.7 | Flash memory layout; cart slot size; on-device cart selection UI |
-| 9 | 5.2 | `input` argument encoding; overrun behaviour |
+| 9 | 5.2 | ~~`input` argument encoding~~ bitfield, bit `i` = button `i` ✅; overrun behaviour 🔲 |
 | 11 | 5.4 | Runtime error behaviour |
 | 12 | 6.1 | Full SRAM allocation |
 | 13 | 6.3 | String storage strategy and maximum string length |
 | 14 | 6.4 | Call stack depth |
-| 15 | 7.2 | Display interface (SPI vs I²C) and pinout |
 | 16 | 7.3 | Button wiring and debounce interval |
 | 17 | 7.4 | Audio output method and RC filter values |
