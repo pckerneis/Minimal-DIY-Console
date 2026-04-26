@@ -33,7 +33,13 @@ project(bidule-01 C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-add_executable(bidule-01 main.c)
+add_executable(bidule-01
+        main.c
+        display.c
+        input.c
+        audio.c
+        runtime/vm.c
+)
 
 pico_set_program_name(bidule-01 "bidule-01")
 pico_set_program_version(bidule-01 "0.1")
@@ -50,6 +56,8 @@ target_include_directories(bidule-01 PRIVATE
 
 target_link_libraries(bidule-01
         hardware_i2c
+        hardware_pwm
+        pico_multicore
         )
 
 if (PICO_CYW43_SUPPORTED)
