@@ -84,7 +84,7 @@ update(frame, input) {
   }
 }
 
-draw() {
+draw(frame, input) {
   cls(0)
   rectfill(2, py, 4, 10, 1)    // player paddle
   rectfill(122, ey, 4, 10, 1)  // enemy paddle
@@ -107,24 +107,43 @@ A cart defines up to four lifecycle functions:
 
 All functions are optional. A cart that only defines `draw()` is valid.
 
+### Cart metadata
+
+A cart can declare metadata at the top of the file using comment annotations:
+
+```
+// @title  My Game
+// @author yourname
+// @version 1.0.0
+// @desc   A short description
+// @id     my-game-v1
+```
+
+The `@id` field is required for persistence (`save`/`load`).
+
 ---
 
 ## Scripting language
 
 The console uses a minimal scripting language with a syntax close to JavaScript. It is integer-only (32-bit wraparound) with no heap allocation and no floating-point.
 
+### Types
+
+- **Integer** — signed 32-bit, arithmetic wraps on overflow. `0` is falsy; all other integers are truthy.
+- **String** — immutable ASCII text (characters 32–127), maximum 128 characters. Strings are always truthy.
+
 ### Operators
 
 ```
 + - * / %          arithmetic
-&& ||              boolean logic
+&& ||              boolean logic (short-circuit)
 > < >= <= == !=    comparison
 & | ^ >> <<        bitwise
 ```
 
 ### Variables
 
-Variables are global and created on first assignment. No declaration keyword needed.
+Variables are global and created on first assignment. No declaration keyword needed. Maximum 64 simultaneous global variables per cart.
 
 ```
 x = 10
@@ -136,19 +155,20 @@ x /= 2
 
 ### Control flow
 
+Braces are mandatory for all blocks.
+
 ```
 if (condition) { ... }
 if (condition) { ... } else { ... }
 while (condition) { ... }
+for (i = 0; i < 10; i += 1) { ... }
 ```
 
-### Strings
+`break` and `continue` are supported inside `while` and `for` blocks.
 
-Strings are ASCII text (characters 32–127) delimited by double quotes.
+### Comments
 
-Escape sequences:
-- `\\` — literal `\` character
-- `\"` — literal `"` character
+Single-line only, introduced by `//`.
 
 ### Built-in functions
 
@@ -180,11 +200,44 @@ line(x0, y0, x1, y1, c) // draw a line
 print(x, y, string)     // render text
 ```
 
-Screen dimensions: 128 × 64 pixels.
+Screen dimensions: 128 × 64 pixels. Drawing outside bounds is silently clipped.
+
+#### Math
+
+```
+abs(x)            // absolute value
+min(a, b)         // smaller of a and b
+max(a, b)         // larger of a and b
+clamp(x, lo, hi)  // clamp x between lo and hi (inclusive)
+seed(n)           // set random seed
+rnd(n)            // random integer in [0, n−1]
+```
+
+#### Strings
+
+```
+len(s)        // length of string s
+char(s, i)    // character at index i (0-based); returns "" if out of bounds
+```
+
+String concatenation uses `+`: `"hello" + " world"` → `"hello world"`.
 
 #### Persistence
 
-_Planned — not yet implemented._ State save/load will be addressed before v1.
+Each cart has 4 save slots (32-bit integers each), identified by its `@id` metadata field.
+
+```
+save(slot, value)  // write integer to slot [0–3]
+load(slot)         // read slot [0–3]; returns 0 if never written
+```
+
+#### Cart utilities
+
+```
+cartcount()         // number of available cart files
+cartmeta(i, field)  // string value of a metadata field for cart i
+loadcart(i)         // exit current cart and load cart i; returns 0 if not found
+```
 
 ---
 
@@ -198,6 +251,7 @@ _Planned — not yet implemented._ State save/load will be addressed before v1.
 | 128×64 display | OLED or LCD; SPI or I²C |
 | 6× tact switch | Momentary pushbutton |
 | Speaker or jack | 1W 8Ω speaker or 3.5mm female connector |
+| Power | USB or 3× AAA batteries |
 | Breadboard + jumper wires | For prototyping; a PCB design is planned |
 
 Wiring instructions and a PCB layout are on the roadmap. A breadboard prototype is sufficient to get started.
