@@ -61,6 +61,7 @@ int main(void) {
     }
 
     // §5.1 steps 4-5: init global table, call init()
+    audio_set_callback(vm_call_audio);
     vm_call_init();
 
     // §5.2 main loop
@@ -76,6 +77,9 @@ int main(void) {
         vm_call_update(frame, mask);
         vm_call_draw(frame, mask);
         display_flush();
+
+        // update audio shadow buffer after draw (§5.3)
+        vm_sync_audio_shadow();
 
         frame++;
 

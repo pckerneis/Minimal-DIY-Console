@@ -381,7 +381,9 @@ Unknown `@keys` are ignored by the runtime.
 
 ### 4.5 Size Limit
 
-🔲 _TBD — maximum cart source size in bytes. Example: 65 536 bytes (64 KB)._
+- Maximum cart **source** size: **65 536 bytes** (64 KB).
+- Maximum compiled **bytecode** size: **16 384 bytes** (16 KB).
+- Maximum unique **string literals** per cart: 32 (see §6.3).
 
 ### 4.6 Compiled Cart Format
 
@@ -389,16 +391,96 @@ The compiled format is a binary file produced by the reference compiler from a s
 
 **File extension:** `.bdbin`
 
-Structure:
+#### Binary layout
+
+All multi-byte integers are little-endian.
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 4 bytes | Magic: 🔲 _TBD (e.g. `MDCC`)_ |
-| 4 | 1 byte | Format version |
-| 5 | 🔲 TBD | Metadata block (title, author, etc.) |
-| 🔲 | remainder | Opcode stream |
+| 0 | 4 B | Magic: `B` `D` `B` `N` |
+| 4 | 1 B | Format version: `1` |
+| 5 | 1 B | Flags: `0` (reserved) |
+| 6 | 2 B | Metadata block length _N_ |
+| 8 | _N_ B | Metadata block (raw text, ignored by runtime) |
+| 8+_N_ | 1 B | String count (0–32) |
+| … | … | String table: for each entry: `[len: u8][chars: len bytes]` (not null-terminated) |
+| … | 2 B | `init_off` — bytecode offset of `init()` body (`0xFFFF` = not defined) |
+| … | 2 B | `update_off` |
+| … | 1 B | `update` `frame` parameter slot (global variable index, `0xFF` = not bound) |
+| … | 1 B | `update` `input` parameter slot |
+| … | 2 B | `draw_off` |
+| … | 1 B | `draw` `frame` parameter slot |
+| … | 1 B | `draw` `input` parameter slot |
+| … | 2 B | `audio_off` |
+| … | 1 B | `audio` `t` parameter slot |
+| … | remainder | Bytecode stream |
 
-🔲 _TBD — opcode set design (stack machine vs register machine, instruction width, etc.)._
+Entry-point offsets are byte offsets from the start of the bytecode stream. All four entry-point records (init, update, draw, audio) are always present in the header; unused ones are set to `0xFFFF`.
+
+**Parameter slots:** each lifecycle function that accepts parameters (`update(frame, input)`, `draw(frame, input)`, `audio(t)`) declares the global variable slots those parameters are bound to. Before executing the function, the runtime writes the argument values into those slots. A slot of `0xFF` means the parameter name is not referenced in the function body and requires no pre-assignment.
+
+#### Opcode set
+
+The VM is a **stack-based interpreter**. Instructions use variable-width encoding: a 1-byte opcode followed by zero or more inline operands. Jump offsets are signed 16-bit integers relative to the instruction immediately following the operand.
+
+| Opcode | Hex | Operands | Description |
+|---|---|---|---|
+| `PUSH_INT` | `0x00` | `i32` | Push 32-bit integer constant |
+| `PUSH_STR` | `0x01` | `u8` | Push string literal by table index (0–31) |
+| `LOAD` | `0x02` | `u8` | Push global variable by slot (0–63) |
+| `STORE` | `0x03` | `u8` | Pop → global variable slot |
+| `ADD` | `0x10` | — | Pop b, pop a; push `a + b` (string concatenation if either is a string) |
+| `SUB` | `0x11` | — | Push `a - b` |
+| `MUL` | `0x12` | — | Push `a * b` |
+| `DIV` | `0x13` | — | Push `a / b`; push `0` if `b == 0` |
+| `MOD` | `0x14` | — | Push `a % b`; push `0` if `b == 0` |
+| `NEG` | `0x15` | — | Pop a; push `-a` |
+| `BAND` | `0x20` | — | Push `a & b` |
+| `BOR` | `0x21` | — | Push `a \| b` |
+| `BXOR` | `0x22` | — | Push `a ^ b` |
+| `SHL` | `0x23` | — | Push `a << (b & 31)` |
+| `SHR` | `0x24` | — | Push `a >> (b & 31)` |
+| `EQ` | `0x30` | — | Push `1` if `a == b`, else `0` (string content comparison) |
+| `NE` | `0x31` | — | Push `1` if `a != b`, else `0` |
+| `LT` | `0x32` | — | Push `1` if `a < b`, else `0` |
+| `LE` | `0x33` | — | Push `1` if `a <= b`, else `0` |
+| `GT` | `0x34` | — | Push `1` if `a > b`, else `0` |
+| `GE` | `0x35` | — | Push `1` if `a >= b`, else `0` |
+| `NOT` | `0x36` | — | Pop a; push `1` if `a == 0`, else `0`. Two in sequence normalise any value to `0` or `1`. |
+| `POP` | `0x40` | — | Discard top of stack |
+| `JUMP` | `0x50` | `i16` | Unconditional relative jump |
+| `JUMP_T` | `0x51` | `i16` | Pop; jump if nonzero |
+| `JUMP_F` | `0x52` | `i16` | Pop; jump if zero |
+| `PEEK_JUMP_T` | `0x53` | `i16` | Peek (no pop); jump if nonzero — used for `\|\|` short-circuit |
+| `PEEK_JUMP_F` | `0x54` | `i16` | Peek (no pop); jump if zero — used for `&&` short-circuit |
+| `CALL` | `0x60` | `u8 id`, `u8 argc` | Call built-in `id`; args pushed left-to-right; pops `argc` args; pushes return value unless void |
+| `RET` | `0xFF` | — | Return from lifecycle function |
+
+#### Compound assignment compilation
+
+Compound assignments (`+=`, `-=`, `*=`, `/=`) compile to `LOAD slot` + arithmetic opcode + `STORE slot`. No dedicated compound-assignment opcodes exist.
+
+#### Short-circuit compilation
+
+`a && b` compiles to:
+```
+<eval a>
+PEEK_JUMP_F skip   ; if a == 0: leave 0 on stack, jump past b
+POP
+<eval b>
+skip:
+NOT NOT            ; normalise result to 0 or 1
+```
+
+`a || b` compiles to:
+```
+<eval a>
+PEEK_JUMP_T skip   ; if a != 0: leave a on stack, jump past b
+POP
+<eval b>
+skip:
+NOT NOT
+```
 
 ### 4.7 Distribution & Flashing
 
