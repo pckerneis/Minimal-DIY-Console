@@ -1,0 +1,57 @@
+// @name pong
+// @author pckerneis
+// @id pong_pckerneis_1
+
+init() {
+  bx = 64
+  by = 32
+  bvx = 1
+  bvy = 1
+  py = 28
+  ey = 28
+  score = 0
+}
+
+update(frame, input) {
+  if (btn(2)) py -= 2
+  if (btn(3)) py += 2
+  if (py < 0) py = 0
+  if (py > 54) py = 54
+
+  bx += bvx
+  by += bvy
+
+  if (by < 0 || by > 63) {
+    bvy = -bvy
+  }
+
+  if (bx < 6 && by >= py && by <= py + 10) {
+    bvx = 1
+    bx = max(bx, 6)
+    score += 1
+  }
+
+  if (by > ey + 5) ey += 1
+  if (by < ey + 5) ey -= 1
+
+  if (bx > 122 && by >= ey && by <= ey + 10) {
+    bvx = -1
+    bx = min(bx, 122)
+  }
+
+  if (bx < 0 || bx > 127) {
+    bx = 64
+    by = 32
+    bvx = -bvx
+    score = 0
+  }
+}
+
+draw() {
+  cls(0)
+  rectfill(2, py, 4, 10, 1)
+  rectfill(122, ey, 4, 10, 1)
+  rectfill(bx, by, 2, 2, 1)
+
+  print(score, 60, 2)
+}
