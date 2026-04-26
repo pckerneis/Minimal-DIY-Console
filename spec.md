@@ -125,7 +125,8 @@ Assignment operators: `=` `+=` `-=` `*=` `/=`
 
 ### 2.7 Control Flow
 
-Braces are mandatory for all blocks.
+Braces are mandatory for multi-statement blocks. They can be omitted
+for single statement branches.
 
 ```
 if (condition) {
