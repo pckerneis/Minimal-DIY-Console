@@ -65,7 +65,7 @@ static bool try_load_cart(const char *name) {
 
         if (attr == 0x0F) {
             // Long File Name entry: accumulate chars ordered by sequence number.
-            // "boot.bdbin" (10 chars) fits in one LFN entry (seq 0x41).
+            // "boot.bdb" (10 chars) fits in one LFN entry (seq 0x41).
             int base = ((e[0] & 0x1F) - 1) * 13;
             for (int k = 0; k < 13; k++) {
                 uint8_t lo = e[LFN_OFF[k]], hi = e[LFN_OFF[k] + 1];
@@ -166,10 +166,10 @@ int main(void) {
         bool fs_ok = (fs[0] == 0xEB && fs[510] == 0x55 && fs[511] == 0xAA);
 
         display_cls(0);
-        display_print(2,  4, "USB Storage Mode");
-        display_print(2, 14, fs_ok ? "FS: OK" : "FS: MISSING");
-        display_print(2, 24, fs_ok ? "Connect USB cable" : "");
-        display_print(2, 34, fs_ok ? "to your computer." : "");
+        display_print(2,  4, "USB Storage Mode", 1);
+        display_print(2, 14, fs_ok ? "FS: OK" : "FS: MISSING", 1);
+        display_print(2, 24, fs_ok ? "Connect USB cable" : "", 1);
+        display_print(2, 34, fs_ok ? "to your computer." : "", 1);
         display_flush();
 
         tusb_init();
@@ -180,13 +180,13 @@ int main(void) {
         // never returns
     }
 
-    // §5.1 step 2: attempt to load boot.bdbin
-    if (!try_load_cart("boot.bdbin")) {
+    // §5.1 step 2: attempt to load boot.bdb
+    if (!try_load_cart("boot.bdb")) {
         // §5.1 step 3: show error, wait for button, fall back to built-in loader
         display_cls(0);
-        display_print(2,  4, "No boot cart found.");
-        display_print(2, 20, "Press any button");
-        display_print(2, 30, "to continue.");
+        display_print(2,  4, "No boot cart found.", 1);
+        display_print(2, 20, "Press any button", 1);
+        display_print(2, 30, "to continue.", 1);
         display_flush();
         wait_any_button();
 

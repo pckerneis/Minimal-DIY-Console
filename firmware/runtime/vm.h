@@ -95,7 +95,7 @@ typedef enum {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-// Load a compiled cart binary (.bdbin). Returns false if the binary is invalid.
+// Load a compiled cart binary (.bdb). Returns false if the binary is invalid.
 bool vm_load(const uint8_t *bin, uint32_t len);
 
 // Lifecycle hooks — no-ops if vm_load has not succeeded.

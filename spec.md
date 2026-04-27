@@ -240,9 +240,9 @@ line(x0, y0, x1, y1, c)
 Draw a line from `(x0, y0)` to `(x1, y1)`.
 
 ```
-print(x, y, string)
+print(text, x, y, c)
 ```
-Render `string` starting at pixel `(x, y)` on a single line (no text wrap and no line breaks).
+Render `text` starting at pixel `(x, y)` in colour `c` on a single line (no text wrap and no line breaks). Integer values are converted to their decimal string representation.
 
 - Font: **Monogram** by Datagoblin. Glyph cell is 5×5px for lowercase, with a 2px ascender zone and 2px descender zone, giving a full character height of 9px. Full ASCII printable range supported.
 - Characters rendered outside screen bounds are silently clipped.
@@ -326,7 +326,7 @@ loadcart(i)         // if cart at index exists, exit current cart and load the r
 | Format | Extension |
 |---|---|
 | Source cart | `.bdcart` |
-| Compiled cart | `.bdbin` |
+| Compiled cart | `.bdb` |
 
 ### 4.2 Encoding
 
@@ -390,7 +390,7 @@ Unknown `@keys` are ignored by the runtime.
 
 The compiled format is a binary file produced by the reference compiler from a source cart.
 
-**File extension:** `.bdbin`
+**File extension:** `.bdb`
 
 #### Binary layout
 
@@ -500,12 +500,12 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 - On the next boot, the runtime scans the storage region and makes available all valid compiled carts it finds.
 
 **On-device cart selection:**
-- The runtime ships with a built-in cart selector that lists all valid `.bdbin` carts found in storage. The user navigates and launches a cart from this screen.
-- The built-in selector is the default boot experience. It can be replaced by placing a custom `boot.bdbin` in cart storage (see §5.1).
+- The runtime ships with a built-in cart selector that lists all valid `.bdb` carts found in storage. The user navigates and launches a cart from this screen.
+- The built-in selector is the default boot experience. It can be replaced by placing a custom `boot.bdb` in cart storage (see §5.1).
 - There is no button combination to return to the boot cart while a cart is running. A cart returns to the selector only by calling `loadcart()` with the appropriate index, or via a hardware reset.
 
 **Tooling:**
-- The reference compiler takes a `.bdcart` source file and produces a `.bdbin` compiled cart binary.
+- The reference compiler takes a `.bdcart` source file and produces a `.bdb` compiled cart binary.
 - No packaging step is required to combine firmware and carts — they are deployed independently.
 - 🔲 *TBD — whether the compiler is a standalone CLI or integrated into a web-based editor.*
 
@@ -518,7 +518,7 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 On power-on or reset:
 
 1. Runtime initialises display, input, and audio subsystems.
-2. Attempt to load and validate `boot.bdbin` from cart storage.
+2. Attempt to load and validate `boot.bdb` from cart storage.
 3. If load or validation fails, display an error message and prompt: _"Press any key to load built-in boot cart."_ Wait for any button press, then load the built-in cart loader instead.
 4. Global variable table is initialised (empty).
 5. `init()` is called once, if defined.

@@ -159,13 +159,13 @@ static void fb_pixel(int x, int y, int c) {
     else   fb[y / 8][x] &= ~(1u << (y % 8));
 }
 
-static int draw_char(int x, int y, char ch) {
+static int draw_char(int x, int y, char ch, int c) {
     if (ch < 32 || ch > 126) ch = '?';
     const uint8_t *g = font[(unsigned char)ch - 32];
     for (int row = 0; row < FONT_H; row++) {
         uint8_t bits = g[row];
         for (int col = 0; col < FONT_W; col++)
-            fb_pixel(x + col, y + row, (bits >> col) & 1);
+            if ((bits >> col) & 1) fb_pixel(x + col, y + row, c);
     }
     return x + FONT_W + 1;
 }
@@ -224,7 +224,7 @@ void display_line(int x0, int y0, int x1, int y1, int c) {
     }
 }
 
-void display_print(int x, int y, const char *s) {
+void display_print(int x, int y, const char *s, int c) {
     while (*s && x + 5 < DISPLAY_W)
-        x = draw_char(x, y, *s++);
+        x = draw_char(x, y, *s++, c);
 }

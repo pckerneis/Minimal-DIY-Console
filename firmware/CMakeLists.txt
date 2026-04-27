@@ -37,13 +37,38 @@ pico_sdk_init()
 # The C file places the image in .flash_fs which is pinned to 0x10040000
 # by the linker options below, so picotool includes it in the normal UF2.
 find_package(Python3 REQUIRED)
+find_program(NODE_EXECUTABLE node REQUIRED)
 set(FS_IMAGE_C ${CMAKE_CURRENT_BINARY_DIR}/fs_image.c)
+set(CARTS_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/../carts)
+set(COMPILER_CLI ${CMAKE_CURRENT_SOURCE_DIR}/../compiler/cli.js)
+set(COMPILER_JS  ${CMAKE_CURRENT_SOURCE_DIR}/../compiler/compiler.js)
+
+# Compile every .bdcart → .bdb; CONFIGURE_DEPENDS re-runs CMake when the
+# glob result changes (i.e. a .bdcart is added or removed).
+file(GLOB BDCART_FILES CONFIGURE_DEPENDS "${CARTS_DIR}/*.bdcart")
+
+set(BDB_FILES "")
+foreach(CART_SRC ${BDCART_FILES})
+    get_filename_component(CART_STEM "${CART_SRC}" NAME_WE)
+    set(CART_OUT "${CARTS_DIR}/${CART_STEM}.bdb")
+    add_custom_command(
+        OUTPUT  "${CART_OUT}"
+        COMMAND ${NODE_EXECUTABLE} "${COMPILER_CLI}" "${CART_SRC}" "${CART_OUT}"
+        DEPENDS "${CART_SRC}" "${COMPILER_CLI}" "${COMPILER_JS}"
+        COMMENT "Compiling ${CART_STEM}.bdcart"
+        VERBATIM
+    )
+    list(APPEND BDB_FILES "${CART_OUT}")
+endforeach()
+
 add_custom_command(
     OUTPUT ${FS_IMAGE_C}
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_fs.py
         ${FS_IMAGE_C}
+        ${BDB_FILES}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_fs.py
+            ${BDB_FILES}
     COMMENT "Generating FAT12 filesystem image"
     VERBATIM
 )

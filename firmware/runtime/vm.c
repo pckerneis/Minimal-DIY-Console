@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 // ─── Limits ───────────────────────────────────────────────────────────────────
 
@@ -132,9 +133,18 @@ static Value call_builtin(uint8_t id, Value *a) {
     case BUILTIN_LINE:
         display_line(a[0].i, a[1].i, a[2].i, a[3].i, a[4].i);
         return (Value){ VALUE_VOID };
-    case BUILTIN_PRINT:
-        display_print(a[0].i, a[1].i, str_get(a[2]));
+    case BUILTIN_PRINT: {
+        char ibuf[16];
+        const char *text;
+        if (a[0].type == VALUE_INT) {
+            snprintf(ibuf, sizeof(ibuf), "%d", (int)a[0].i);
+            text = ibuf;
+        } else {
+            text = str_get(a[0]);
+        }
+        display_print(a[1].i, a[2].i, text, a[3].i);
         return (Value){ VALUE_VOID };
+    }
 
     // Math
     case BUILTIN_ABS: {
@@ -327,7 +337,7 @@ done:
 
 // ─── vm_load ─────────────────────────────────────────────────────────────────
 //
-// Binary format (.bdbin) — all multi-byte integers little-endian:
+// Binary format (.bdb) — all multi-byte integers little-endian:
 //
 //   [0]     4 B   magic 'B','D','B','N'
 //   [4]     1 B   format version (1)

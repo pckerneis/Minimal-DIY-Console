@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Bidule 01 compiler CLI
-// Usage: bdcc <input.bdcart> [output.bdbin]
+// Usage: bdcc <input.bdcart> [output.bdb]
 //        bdcc --check <input.bdcart>   (validate only, no output)
 
 import { compile } from './compiler.js';
@@ -14,7 +14,7 @@ if (check) args.shift();
 
 const input = args[0];
 if (!input) {
-  console.error('Usage: bdcc [--check] <input.bdcart> [output.bdbin]');
+  console.error('Usage: bdcc [--check] <input.bdcart> [output.bdb]');
   process.exit(1);
 }
 
@@ -42,7 +42,7 @@ if (check) {
 }
 
 const stem   = basename(input, extname(input));
-const output = args[1] ?? `${stem}.bdbin`;
+const output = args[1] ?? `${stem}.bdb`;
 
 try {
   writeFileSync(output, binary);

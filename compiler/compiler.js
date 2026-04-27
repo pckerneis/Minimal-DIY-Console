@@ -1,4 +1,4 @@
-// Bidule 01 compiler — .bdcart source → .bdbin binary
+// Bidule 01 compiler — .bdcart source → .bdb binary
 // Usage (browser / bundler): import { compile } from './compiler.js'
 // Usage (Node.js):           const { compile } = await import('./compiler.js')
 
@@ -34,8 +34,8 @@ const BUILTINS = {
   cls:       { id:  2, argc: 1, returns: false, audioOk: false },
   pset:      { id:  3, argc: 3, returns: false, audioOk: false },
   rectfill:  { id:  4, argc: 5, returns: false, audioOk: false },
-  line:      { id:  5, argc: 4, returns: false, audioOk: false },
-  print:     { id:  6, argc: 3, returns: false, audioOk: false },
+  line:      { id:  5, argc: 5, returns: false, audioOk: false },
+  print:     { id:  6, argc: 4, returns: false, audioOk: false },
   abs:       { id:  7, argc: 1, returns: true,  audioOk: true  },
   min:       { id:  8, argc: 2, returns: true,  audioOk: true  },
   max:       { id:  9, argc: 2, returns: true,  audioOk: true  },
@@ -641,7 +641,7 @@ function assembleBinary(meta, ctx, compiled) {
 // ─── Main compile function ────────────────────────────────────────────────────
 
 /**
- * Compile a Bidule 01 source cart (.bdcart) to a binary cart (.bdbin).
+ * Compile a Bidule 01 source cart (.bdcart) to a binary cart (.bdb).
  *
  * @param  {string} source  - Source text of the cart.
  * @returns {{ binary: Uint8Array|null, errors: string[], warnings: string[] }}

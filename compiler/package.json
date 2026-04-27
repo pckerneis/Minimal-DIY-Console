@@ -1,7 +1,7 @@
 {
   "name": "@bidule-01/compiler",
   "version": "0.1.0",
-  "description": "Bidule 01 source compiler — .bdcart → .bdbin",
+  "description": "Bidule 01 source compiler — .bdcart → .bdb",
   "type": "module",
   "main": "compiler.js",
   "exports": {
