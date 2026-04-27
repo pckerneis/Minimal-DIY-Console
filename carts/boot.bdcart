@@ -5,14 +5,14 @@
 draw(frame) {
     cls(0)
   
-    for(i = 0; i < 12; i += 1) {
+    for(i = 0; i < 12; i++) {
         l = 4161
         if (i > 3) l = 54635
         if (i > 7) l = 120683
 
         off = min(0, frame * 4 + i * 8 - 130)
 
-        for(j = 0; j < 17; j += 1) {
+        for(j = 0; j < 17; j++) {
             if ((l >> j) & 1) {
                 x = 30 + j * 4 + off
                 y = 30 + i
@@ -27,7 +27,7 @@ draw(frame) {
 
 update(frame) {
     if (frame>90) {
-        for (i=0; i<cartcount(); i+=1) {
+        for (i=0; i<cartcount(); i++) {
             if (cartmeta(i, "id") == "cart_loader") {
                 loadcart(i)
             }

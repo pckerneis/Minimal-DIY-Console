@@ -129,7 +129,7 @@ function lex(src) {
 
     // Two-character operators (must be checked before single-char)
     const two = src.slice(i, i + 2);
-    if (['+=', '-=', '*=', '/=', '==', '!=', '>=', '<=', '&&', '||', '>>', '<<'].includes(two)) {
+    if (['+=', '-=', '*=', '/=', '==', '!=', '>=', '<=', '&&', '||', '>>', '<<', '++', '--'].includes(two)) {
       tokens.push({ type: 'OP', value: two, line });
       i += 2;
       continue;
@@ -280,16 +280,45 @@ class Parser {
     if (t.type === 'IDENT') {
       const next = this.tok[this.pos + 1] || {};
       const isAssign = next.type === 'OP' && ['=', '+=', '-=', '*=', '/='].includes(next.value);
+      const isIncr   = next.type === 'OP' && ['++', '--'].includes(next.value);
       const isCall   = next.type === 'OP' && next.value === '(';
       if (isAssign) return this.parseAssignment();
+      if (isIncr)   return this.parsePostfixIncr();
       if (isCall)   return this.parseCallStmt();
       this.ctx.error(`line ${t.line}: expected assignment or function call`);
       this.advance();
       return;
     }
 
+    if (t.type === 'OP' && ['++', '--'].includes(t.value))
+      return this.parsePrefixIncr();
+
     this.ctx.error(`line ${t.line}: unexpected token '${t.value}'`);
     this.advance();
+  }
+
+  parsePostfixIncr() {
+    const ident = this.eatIdent();
+    if (this.inAudio)
+      this.ctx.error(`line ${ident.line}: assignments are not allowed inside audio()`);
+    const op   = this.advance();  // ++ or --
+    const slot = this.ctx.varSlot(ident.value, ident.line);
+    this.e.emit(OP.LOAD, slot);
+    this.e.emit(OP.PUSH_INT); this.e.emitI32(1);
+    this.e.emit(op.value === '++' ? OP.ADD : OP.SUB);
+    this.e.emit(OP.STORE, slot);
+  }
+
+  parsePrefixIncr() {
+    const op    = this.advance();  // ++ or --
+    const ident = this.eatIdent();
+    if (this.inAudio)
+      this.ctx.error(`line ${ident.line}: assignments are not allowed inside audio()`);
+    const slot = this.ctx.varSlot(ident.value, ident.line);
+    this.e.emit(OP.LOAD, slot);
+    this.e.emit(OP.PUSH_INT); this.e.emitI32(1);
+    this.e.emit(op.value === '++' ? OP.ADD : OP.SUB);
+    this.e.emit(OP.STORE, slot);
   }
 
   parseAssignment() {
@@ -395,6 +424,16 @@ class Parser {
     for (const p of breakPatches) this.e.patch(p);
   }
 
+  parseForUpdate() {
+    const t    = this.peek();
+    const next = this.tok[this.pos + 1] || {};
+    if (t.type === 'IDENT' && next.type === 'OP' && ['++', '--'].includes(next.value))
+      return this.parsePostfixIncr();
+    if (t.type === 'OP' && ['++', '--'].includes(t.value))
+      return this.parsePrefixIncr();
+    this.parseAssignment();
+  }
+
   parseFor() {
     this.eatKw('for');
     this.eatOp('(');
@@ -411,7 +450,7 @@ class Parser {
     const savedE  = this.e;
     const updateE = new Emitter();
     this.e = updateE;
-    this.parseAssignment();           // update
+    this.parseForUpdate();            // update: assignment or ++/--
     this.e = savedE;
     this.eatOp(')');
 

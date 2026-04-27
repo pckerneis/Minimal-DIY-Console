@@ -1,1 +1,9 @@
-- Support `++` and `--`
+- Example cart: snake
+- Example cart: flappy
+- Example cart: paint
+- Example cart: breakout
+- Example cart: asteroids
+- Example cart: game of life
+- Example cart: minigolf
+- Example cart: frogger
+- Example cart: virtual pet

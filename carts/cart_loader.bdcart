@@ -11,11 +11,11 @@ update(frame, input) {
     n = cartcount()
     if (n > 0) {
         if (btnp(2)) {
-            sel -= 1
+            sel--
             if (sel < 0) sel = 0
         }
         if (btnp(3)) {
-            sel += 1
+            sel++
             if (sel > n-1) sel = n-1
         }
         if (sel < scroll) scroll = sel
@@ -38,7 +38,7 @@ draw(frame) {
         print("No carts found.", 2, 24, 1)
     }
 
-    for (i=0; i<5; i+=1) {
+    for (i=0; i<5; i++) {
         idx = scroll + i
         if (idx >= n) break
         y = 13 + i*10

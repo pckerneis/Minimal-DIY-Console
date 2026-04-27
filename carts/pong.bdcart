@@ -28,11 +28,11 @@ update(frame, input) {
   if (bx < 6 && by >= py && by <= py + 10) {
     bvx = 1
     bx = max(bx, 6)
-    score += 1
+    score++
   }
 
-  if (by > ey + 5) ey += 1
-  if (by < ey + 5) ey -= 1
+  if (by > ey + 5) ey++
+  if (by < ey + 5) ey--
 
   if (bx > 122 && by >= ey && by <= ey + 10) {
     bvx = -1

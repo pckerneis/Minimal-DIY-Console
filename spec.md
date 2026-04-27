@@ -54,11 +54,12 @@ Key properties:
 
 ```
 program      := statement*
-statement    := assignment | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | call_stmt
+statement    := assignment | incr_stmt | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | call_stmt
 assignment   := IDENT ('=' | '+=' | '-=' | '*=' | '/=') expr
+incr_stmt    := IDENT ('++' | '--') | ('++' | '--') IDENT
 if_stmt      := 'if' '(' expr ')' block ( 'else' block )?
 while_stmt   := 'while' '(' expr ')' block
-for_stmt     := 'for' '(' assignment ';' expr ';' assignment ')' block
+for_stmt     := 'for' '(' assignment ';' expr ';' (assignment | incr_stmt) ')' block
 break_stmt   := 'break'
 continue_stmt := 'continue'
 call_stmt    := IDENT '(' arglist ')'
@@ -123,6 +124,8 @@ From highest to lowest:
 
 Assignment operators: `=` `+=` `-=` `*=` `/=`
 
+Increment/decrement: `++` `--` (statement form only; both prefix `++i` and postfix `i++` are equivalent and do not return a value)
+
 ### 2.7 Control Flow
 
 Braces are mandatory for multi-statement blocks. They can be omitted
@@ -143,7 +146,7 @@ while (condition) {
   ...
 }
 
-for (i = 0; i < 10; i += 1) {
+for (i = 0; i < 10; i++) {
   ...
 }
 ```
@@ -460,6 +463,8 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 #### Compound assignment compilation
 
 Compound assignments (`+=`, `-=`, `*=`, `/=`) compile to `LOAD slot` + arithmetic opcode + `STORE slot`. No dedicated compound-assignment opcodes exist.
+
+`++` and `--` (both prefix and postfix forms) compile identically to `LOAD slot` + `PUSH_INT 1` + `ADD`/`SUB` + `STORE slot`.
 
 #### Short-circuit compilation
 

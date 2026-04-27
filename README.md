@@ -70,8 +70,8 @@ update(frame, input) {
   if (bx < 6 && by >= py && by <= py + 10) bvx = 1
 
   // enemy AI
-  if (by > ey + 5) ey += 1
-  if (by < ey + 5) ey -= 1
+  if (by > ey + 5) ey++
+  if (by < ey + 5) ey--
 
   // enemy paddle collision
   if (bx > 122 && by >= ey && by <= ey + 10) bvx = -1
@@ -155,13 +155,11 @@ x /= 2
 
 ### Control flow
 
-Braces are mandatory for all blocks.
-
 ```
 if (condition) { ... }
 if (condition) { ... } else { ... }
 while (condition) { ... }
-for (i = 0; i < 10; i += 1) { ... }
+for (i = 0; i < 10; i ++) { ... }
 ```
 
 `break` and `continue` are supported inside `while` and `for` blocks.
