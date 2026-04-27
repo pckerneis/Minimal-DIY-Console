@@ -1,6 +1,7 @@
 #include "vm.h"
 #include "../display.h"
 #include "../input.h"
+#include "../cart.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -75,6 +76,7 @@ static struct {
     uint32_t rng;
 
     bool     loaded;
+    bool     exit_exec;  // set by loadcart to abort the current exec() call
 } vm;
 
 // ─── Binary reading helpers ───────────────────────────────────────────────────
@@ -108,6 +110,8 @@ static Value str_scratch(const char *s) {
     vm.scratch[slot][MAX_STR_LEN] = '\0';
     return (Value){ VALUE_STR, SCRATCH_BASE + slot };
 }
+
+static Value exec(uint16_t entry, Value *globals, Value *stk);
 
 // ─── Built-in dispatch ────────────────────────────────────────────────────────
 
@@ -186,13 +190,21 @@ static Value call_builtin(uint8_t id, Value *a) {
     case BUILTIN_LOAD_SLOT:
         return (Value){ VALUE_INT, 0 };
 
-    // Cart utilities — cart storage not yet implemented
+    // Cart utilities
     case BUILTIN_CARTCOUNT:
-        return (Value){ VALUE_INT, 0 };
-    case BUILTIN_CARTMETA:
-        return str_scratch("");
-    case BUILTIN_LOADCART:
-        return (Value){ VALUE_INT, 0 };
+        return (Value){ VALUE_INT, cart_count() };
+    case BUILTIN_CARTMETA: {
+        const char *val = cart_meta(a[0].i, str_get(a[1]));
+        return str_scratch(val);
+    }
+    case BUILTIN_LOADCART: {
+        uint32_t size;
+        const uint8_t *bin = cart_get(a[0].i, &size);
+        if (!bin || !vm_load(bin, size)) return (Value){ VALUE_INT, 0 };
+        exec(vm.off_init, vm.globals, vm.stack0);
+        vm.exit_exec = true;
+        return (Value){ VALUE_VOID };
+    }
 
     default:
         return (Value){ VALUE_VOID };
@@ -212,6 +224,7 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
     uint16_t ip = entry;
     int      sp = 0;
     vm.scratch_top = 0;
+    vm.exit_exec   = false;
 
 #define PUSH(v)    do { if (sp < STACK_SIZE) stk[sp++] = (v); } while (0)
 #define PUSH_I(n)  PUSH(((Value){ VALUE_INT, (int32_t)(n) }))
@@ -317,6 +330,7 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
             for (int i = argc - 1; i >= 0; i--) args[i] = POP();
             Value result = call_builtin(id, args);
             if (result.type != VALUE_VOID) PUSH(result);
+            if (vm.exit_exec) goto done;
             break;
         }
 

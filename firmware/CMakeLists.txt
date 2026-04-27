@@ -79,6 +79,7 @@ add_executable(bidule-01
         display.c
         input.c
         audio.c
+        cart.c
         runtime/vm.c
         ${FS_IMAGE_C}
 )
