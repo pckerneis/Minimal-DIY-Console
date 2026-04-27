@@ -104,6 +104,10 @@ void vm_call_update(int frame, uint8_t input);
 void vm_call_draw(int frame, uint8_t input);
 int  vm_call_audio(int t);   // returns sample in [0, 255]
 
+// Returns true (and clears the flag) if loadcart() was called this frame.
+// When true, the caller should reset its frame counter to 0.
+bool vm_cart_switched(void);
+
 // Copy live globals into the inactive audio shadow buffer and flip the active
 // index. Call this from core 0 immediately after vm_call_draw() returns.
 void vm_sync_audio_shadow(void);

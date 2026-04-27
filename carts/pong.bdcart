@@ -53,5 +53,5 @@ draw() {
   rectfill(122, ey, 4, 10, 1)
   rectfill(bx, by, 2, 2, 1)
 
-  print(score, 2, 2, 1)
+  print(score, 60, 2, 1)
 }

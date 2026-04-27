@@ -28,7 +28,7 @@ draw(frame) {
 update(frame) {
     if (frame>90) {
         for (i=0; i<cartcount(); i+=1) {
-            if (cartmeta(i, "name") == "pong") {
+            if (cartmeta(i, "id") == "cart_loader") {
                 loadcart(i)
             }
         }

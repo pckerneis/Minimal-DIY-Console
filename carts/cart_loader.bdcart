@@ -1,0 +1,55 @@
+// @name Cart Loader
+// @author pckerneis
+// @id cart_loader
+
+init() {
+    sel = 0
+    scroll = 0
+}
+
+update(frame, input) {
+    n = cartcount()
+    if (n > 0) {
+        if (btnp(2)) {
+            sel -= 1
+            if (sel < 0) sel = 0
+        }
+        if (btnp(3)) {
+            sel += 1
+            if (sel > n-1) sel = n-1
+        }
+        if (sel < scroll) scroll = sel
+        if (sel >= scroll+5) scroll = sel-4
+        if (btnp(4)) {
+            loadcart(sel)
+        }
+    }
+}
+
+draw(frame) {
+    cls(0)
+
+    n = cartcount()
+
+    rectfill(0, 0, 128, 11, 1)
+    print("CARTS", 2, 1, 0)
+
+    if (n == 0) {
+        print("No carts found.", 2, 24, 1)
+    }
+
+    for (i=0; i<5; i+=1) {
+        idx = scroll + i
+        if (idx >= n) break
+        y = 13 + i*10
+        if (idx == sel) {
+            rectfill(0, y-1, 128, 10, 1)
+            print(cartmeta(idx, "name"), 2, y, 0)
+        } else {
+            print(cartmeta(idx, "name"), 2, y, 1)
+        }
+    }
+
+    if (scroll > 0) print("^", 121, 13, 1)
+    if (scroll+5 < n) print("v", 121, 53, 1)
+}

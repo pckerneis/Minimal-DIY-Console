@@ -76,7 +76,8 @@ static struct {
     uint32_t rng;
 
     bool     loaded;
-    bool     exit_exec;  // set by loadcart to abort the current exec() call
+    bool     exit_exec;     // set by loadcart to abort the current exec() call
+    bool     cart_switched; // set by loadcart; cleared by vm_cart_switched()
 } vm;
 
 // ─── Binary reading helpers ───────────────────────────────────────────────────
@@ -202,7 +203,8 @@ static Value call_builtin(uint8_t id, Value *a) {
         const uint8_t *bin = cart_get(a[0].i, &size);
         if (!bin || !vm_load(bin, size)) return (Value){ VALUE_INT, 0 };
         exec(vm.off_init, vm.globals, vm.stack0);
-        vm.exit_exec = true;
+        vm.exit_exec     = true;
+        vm.cart_switched = true;
         return (Value){ VALUE_VOID };
     }
 
@@ -461,6 +463,13 @@ int vm_call_audio(int t) {
     Value result = exec(vm.off_audio, shadow, vm.stack1);
     int32_t s = result.i;
     return s < 0 ? 0 : s > 255 ? 255 : (int)s;
+}
+
+// Returns true (and clears the flag) if loadcart() was called this frame.
+bool vm_cart_switched(void) {
+    bool v = vm.cart_switched;
+    vm.cart_switched = false;
+    return v;
 }
 
 // Called from core 0 after vm_call_draw() (§5.3).
