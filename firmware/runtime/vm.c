@@ -221,7 +221,7 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
         // ── Variables ────────────────────────────────────────────────────────
         case OP_LOAD: {
             uint8_t s = R8();
-            // TODO PUSH(s < MAX_VARS ? globals[s] : (Value){ VALUE_INT, 0 });
+            PUSH(s < MAX_VARS ? globals[s] : ((Value){ VALUE_INT, 0 }));
             break;
         }
         case OP_STORE: {

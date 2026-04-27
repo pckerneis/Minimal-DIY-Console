@@ -20,10 +20,110 @@
 #define FRAME_PERIOD_MS (1000 / TARGET_FPS)
 
 // --- Cart loading ------------------------------------------------------------
+//
+// FAT12 layout — must stay in sync with FLASH_DISK_OFFSET in usb_msc.c
+// and the constants in tools/gen_fs.py.
+#define CART_DISK_BASE    (0x10000000u + 512u * 1024u)  // XIP_BASE + FLASH_DISK_OFFSET
+#define CART_SEC          512u
+#define CART_SPC          8u      // sectors per cluster
+#define CART_FAT_SECS     3u
+#define CART_ROOT_ENTRIES 512u
+#define CART_ROOT_SEC     (1u + 2u * CART_FAT_SECS)
+#define CART_DATA_SEC     (CART_ROOT_SEC + CART_ROOT_ENTRIES * 32u / CART_SEC)
+
+static uint16_t fat12_entry(const uint8_t *fat, uint16_t clus) {
+    uint32_t off = (uint32_t)clus + clus / 2;
+    uint16_t v   = fat[off] | ((uint16_t)fat[off + 1] << 8);
+    return (clus & 1) ? (v >> 4) : (v & 0x0FFF);
+}
 
 static bool try_load_cart(const char *name) {
-    // TODO: scan flash cart storage, find name, call vm_load()
-    (void)name;
+    const uint8_t *disk = (const uint8_t *)CART_DISK_BASE;
+    const uint8_t *fat  = disk + CART_SEC;
+    const uint8_t *root = disk + CART_ROOT_SEC * CART_SEC;
+
+    // Lowercase the search name for case-insensitive comparison.
+    char target[32]; int tlen = 0;
+    for (int i = 0; name[i] && tlen < 31; i++) {
+        char c = name[i];
+        target[tlen++] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+    }
+    target[tlen] = '\0';
+
+    // Byte offsets of the 13 UTF-16LE characters inside a FAT LFN entry.
+    static const int LFN_OFF[13] = {1,3,5,7,9, 14,16,18,20,22,24, 28,30};
+
+    char lfn[32] = {0}; int lfn_len = 0; bool has_lfn = false;
+
+    for (int i = 0; i < (int)CART_ROOT_ENTRIES; i++) {
+        const uint8_t *e = root + i * 32;
+
+        if (e[0] == 0x00) break;                         // end of directory
+        if (e[0] == 0xE5) { has_lfn = false; lfn_len = 0; continue; } // deleted
+
+        uint8_t attr = e[11];
+
+        if (attr == 0x0F) {
+            // Long File Name entry: accumulate chars ordered by sequence number.
+            // "boot.bdbin" (10 chars) fits in one LFN entry (seq 0x41).
+            int base = ((e[0] & 0x1F) - 1) * 13;
+            for (int k = 0; k < 13; k++) {
+                uint8_t lo = e[LFN_OFF[k]], hi = e[LFN_OFF[k] + 1];
+                if (lo == 0x00 && hi == 0x00) break;  // null terminator
+                if (lo == 0xFF && hi == 0xFF) break;  // padding
+                int pos = base + k;
+                if (pos < 31) {
+                    char c = (char)lo;
+                    lfn[pos]   = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+                    if (pos >= lfn_len) lfn_len = pos + 1;
+                }
+            }
+            lfn[lfn_len] = '\0';
+            has_lfn = true;
+            continue;
+        }
+
+        if (attr & 0x18) { has_lfn = false; lfn_len = 0; continue; } // dir/label
+
+        // Compare: prefer LFN, fall back to 8.3 short name.
+        bool match = false;
+        if (has_lfn && lfn_len > 0) {
+            match = (strcmp(lfn, target) == 0);
+        } else {
+            char s83[13]; int si = 0;
+            for (int k = 0; k < 8 && e[k] != ' '; k++) {
+                char c = e[k]; s83[si++] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+            }
+            if (e[8] != ' ') {
+                s83[si++] = '.';
+                for (int k = 8; k < 11 && e[k] != ' '; k++) {
+                    char c = e[k]; s83[si++] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+                }
+            }
+            s83[si] = '\0';
+            match = (strcmp(s83, target) == 0);
+        }
+        has_lfn = false; lfn_len = 0;
+        if (!match) continue;
+
+        uint16_t first_clus = (uint16_t)(e[26] | (e[27] << 8));
+        uint32_t size       = (uint32_t)(e[28] | (e[29] << 8) | (e[30] << 16) | (e[31] << 24));
+        if (first_clus < 2 || size == 0) return false;
+
+        // Verify the cluster chain is contiguous so we can hand an XIP pointer
+        // directly to vm_load() without copying. Files on a freshly formatted
+        // drive are always contiguous; fragmented files are not supported.
+        uint16_t c = first_clus, prev = 0;
+        while (c >= 2 && c < 0xFF8) {
+            if (prev > 0 && c != (uint16_t)(prev + 1)) return false;
+            prev = c;
+            c = fat12_entry(fat, c);
+        }
+
+        uint32_t off = CART_DATA_SEC * CART_SEC
+                       + (uint32_t)(first_clus - 2) * CART_SPC * CART_SEC;
+        return vm_load(disk + off, size);
+    }
     return false;
 }
 
@@ -74,8 +174,8 @@ int main(void) {
 
         tusb_init();
         for (;;) {
+            usb_msc_flush(); // flush before tud_task so cache is clean on next write
             tud_task();
-            usb_msc_flush(); // flush write-behind cache; safe here, not in a callback
         }
         // never returns
     }
