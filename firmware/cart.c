@@ -34,66 +34,40 @@ static bool chain_contiguous(uint16_t first) {
     return true;
 }
 
+static bool valid_bdb(const uint8_t *p, uint32_t size) {
+    return size >= 8
+        && p[0] == 'B' && p[1] == 'D' && p[2] == 'B' && p[3] == 'N'
+        && p[4] == 1;
+}
+
 // ── Directory scanner ─────────────────────────────────────────────────────────
 //
-// Walks the FAT12 root directory and calls the visitor for each valid .bdb
-// file. Returns the total count of valid carts found.
+// gen_fs.py only writes 8.3 entries (no LFN). Carts are identified by their
+// 8.3 extension field ("BDB"), which the OS also preserves for USB-copied files.
 
 typedef void (*cart_visit_fn)(int idx, const uint8_t *data, uint32_t size,
                               void *ctx);
 
-static const int LFN_OFF[13] = {1,3,5,7,9, 14,16,18,20,22,24, 28,30};
-
 static int scan(cart_visit_fn visit, void *ctx) {
     const uint8_t *root = DISK_BASE + ROOT_SEC * SEC;
-    char lfn[32] = {0}; int lfn_len = 0; bool has_lfn = false;
     int count = 0;
 
     for (int i = 0; i < (int)ROOT_MAX; i++) {
         const uint8_t *e = root + i * 32;
         if (e[0] == 0x00) break;
-        if (e[0] == 0xE5) { has_lfn = false; lfn_len = 0; continue; }
+        if (e[0] == 0xE5) continue;
 
         uint8_t attr = e[11];
+        if (attr == 0x0F || (attr & 0x18)) continue; // LFN, dir, or volume label
 
-        if (attr == 0x0F) {
-            int base = ((e[0] & 0x1F) - 1) * 13;
-            for (int k = 0; k < 13; k++) {
-                uint8_t lo = e[LFN_OFF[k]], hi = e[LFN_OFF[k] + 1];
-                if ((lo == 0 && hi == 0) || (lo == 0xFF && hi == 0xFF)) break;
-                int pos = base + k;
-                if (pos < 31) {
-                    char c = (char)lo;
-                    lfn[pos] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
-                    if (pos >= lfn_len) lfn_len = pos + 1;
-                }
-            }
-            lfn[lfn_len] = '\0';
-            has_lfn = true;
-            continue;
-        }
-
-        bool cur_has_lfn = has_lfn;
-        int  cur_lfn_len = lfn_len;
-        has_lfn = false; lfn_len = 0;
-
-        if (attr & 0x18) continue; // volume label or subdirectory
-
-        // Identify .bdb by 8.3 extension (always "BDB" regardless of LFN).
-        if (e[8] != 'B' || e[9] != 'D' || e[10] != 'B') {
-            // Also accept lowercase in LFN tail for robustness.
-            if (!cur_has_lfn || cur_lfn_len < 4) continue;
-            const char *t = lfn + cur_lfn_len - 4;
-            if (t[0] != '.' || t[1] != 'b' || t[2] != 'd' || t[3] != 'b') continue;
-        }
+        if (e[8] != 'B' || e[9] != 'D' || e[10] != 'B') continue;
 
         uint16_t clus = (uint16_t)(e[26] | (e[27] << 8));
         uint32_t size = (uint32_t)(e[28] | (e[29]<<8) | (e[30]<<16) | (e[31]<<24));
         if (clus < 2 || size == 0 || !chain_contiguous(clus)) continue;
 
         const uint8_t *data = clus_to_ptr(clus);
-        if (size < 8 || data[0]!='B' || data[1]!='D' || data[2]!='B'
-                     || data[3]!='N' || data[4] != 1) continue;
+        if (!valid_bdb(data, size)) continue;
 
         if (visit) visit(count, data, size, ctx);
         count++;
@@ -122,6 +96,54 @@ const uint8_t *cart_get(int index, uint32_t *out_size) {
     if (index < 0 || index >= total || !g.data) return NULL;
     if (out_size) *out_size = g.size;
     return g.data;
+}
+
+// ── cart_find_by_name ─────────────────────────────────────────────────────────
+
+const uint8_t *cart_find_by_name(const char *name, uint32_t *out_size) {
+    // Lowercase target for case-insensitive comparison against 8.3 name.
+    char target[13]; int tlen = 0;
+    for (const char *p = name; *p && tlen < 12; p++) {
+        char c = *p;
+        target[tlen++] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+    }
+    target[tlen] = '\0';
+
+    const uint8_t *root = DISK_BASE + ROOT_SEC * SEC;
+    for (int i = 0; i < (int)ROOT_MAX; i++) {
+        const uint8_t *e = root + i * 32;
+        if (e[0] == 0x00) break;
+        if (e[0] == 0xE5) continue;
+
+        uint8_t attr = e[11];
+        if (attr == 0x0F || (attr & 0x18)) continue;
+
+        // Build lowercase 8.3 name string for comparison.
+        char s83[13]; int si = 0;
+        for (int k = 0; k < 8 && e[k] != ' '; k++) {
+            char c = e[k]; s83[si++] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+        }
+        if (e[8] != ' ') {
+            s83[si++] = '.';
+            for (int k = 8; k < 11 && e[k] != ' '; k++) {
+                char c = e[k]; s83[si++] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+            }
+        }
+        s83[si] = '\0';
+
+        if (strcmp(s83, target) != 0) continue;
+
+        uint16_t clus = (uint16_t)(e[26] | (e[27] << 8));
+        uint32_t size = (uint32_t)(e[28] | (e[29]<<8) | (e[30]<<16) | (e[31]<<24));
+        if (clus < 2 || size == 0 || !chain_contiguous(clus)) return NULL;
+
+        const uint8_t *data = clus_to_ptr(clus);
+        if (!valid_bdb(data, size)) return NULL;
+
+        if (out_size) *out_size = size;
+        return data;
+    }
+    return NULL;
 }
 
 // ── cart_meta ─────────────────────────────────────────────────────────────────
