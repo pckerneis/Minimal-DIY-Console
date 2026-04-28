@@ -5,7 +5,7 @@
 > Sections marked 🔲 are placeholders pending design decisions.
 > Sections marked ✅ are considered stable.
 
-**Spec version:** 0.2  
+**Spec version:** 0.3  
 **Last updated:** 2026-04-28
 
 ---
@@ -39,12 +39,12 @@
 
 ### 2.1 Overview
 
-The console scripting language is a minimal, dynamically-typed, integer-only language with a syntax loosely inspired by JavaScript. It is designed to be implementable in under 2 000 lines of host code.
+The console scripting language is a minimal language with two types — integers and arrays — with syntax loosely inspired by JavaScript. It is designed to be implementable in under 2 000 lines of host code.
 
 Key properties:
 - Integer-only arithmetic (no floating-point)
-- Global variable scope only
-- No heap allocation exposed to the programmer
+- Global scope only (variables and arrays)
+- No dynamic memory allocation; all arrays are globally declared with a fixed size
 - In V1, no user-defined functions beyond the four lifecycle hooks
 - Single-file programs
 
@@ -54,12 +54,14 @@ Key properties:
 
 ```
 program      := statement*
-statement    := assignment | incr_stmt | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | call_stmt
+statement    := array_decl | assignment | array_assign | incr_stmt | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | call_stmt
+array_decl   := IDENT '[' NUMBER ']'
 assignment   := IDENT ('=' | '+=' | '-=' | '*=' | '/=') expr
+array_assign := IDENT '[' expr ']' ('=' | '+=' | '-=' | '*=' | '/=') expr
 incr_stmt    := IDENT ('++' | '--') | ('++' | '--') IDENT
 if_stmt      := 'if' '(' expr ')' block ( 'else' block )?
 while_stmt   := 'while' '(' expr ')' block
-for_stmt     := 'for' '(' assignment ';' expr ';' (assignment | incr_stmt) ')' block
+for_stmt     := 'for' '(' (assignment | array_assign) ';' expr ';' (assignment | array_assign | incr_stmt) ')' block
 break_stmt   := 'break'
 continue_stmt := 'continue'
 call_stmt    := IDENT '(' arglist ')'
@@ -73,8 +75,12 @@ shift        := additive ( ('>>' | '<<') additive )*
 additive     := multiplicative ( ('+' | '-') multiplicative )*
 multiplicative := unary ( ('*' | '/' | '%') unary )*
 unary        := '-' unary | primary
-primary      := NUMBER | STRING | IDENT | IDENT '(' arglist ')' | '(' expr ')'
+primary      := NUMBER | CHAR_LIT | STRING | IDENT | IDENT '[' expr ']' | IDENT '.' 'length' | IDENT '(' arglist ')' | '(' expr ')'
 arglist      := (expr (',' expr)*)?
+NUMBER       := [0-9]+
+CHAR_LIT     := "'" ASCII_CHAR "'"
+STRING       := '"' (ASCII_CHAR | '\\' | '\"')* '"'
+IDENT        := [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 ### 2.3 Types
@@ -84,9 +90,9 @@ The language has two types:
 | Type | Description |
 |---|---|
 | **Integer** | Signed 32-bit. Arithmetic wraps on overflow (two's complement). |
-| **String** | Immutable sequence of ASCII characters (codes 32–127). |
+| **Array** | Globally declared, fixed-size, mutable sequence of integers. |
 
-There is no boolean type. Integers are used for truthiness: `0` is falsy, all other integers are truthy. Strings are always truthy.
+There is no boolean type. Integers are used for truthiness: `0` is falsy, all other integers are truthy. String literals are not a runtime type — they are compile-time syntax that produces a read-only array of char codes (see §2.8).
 
 ### 2.4 Integer Semantics
 
@@ -153,18 +159,66 @@ for (i = 0; i < 10; i++) {
 
 `break` exits the innermost loop immediately. `continue` skips to the next iteration. Both are only valid inside `while` or `for` blocks.
 
-### 2.8 Strings
+### 2.8 Arrays
 
-- Delimited by double quotes: `"hello"`
-- ASCII characters only (codes 32–127)
-- Escape sequences:
-  - `\\` — literal backslash
-  - `\"` — literal double quote
-- Strings are immutable.
-- Concatenation uses the `+` operator: `"hello" + " " + "world"` → `"hello world"`
-- `len(s)` returns the length of string `s` as an integer.
-- `char(s, i)` returns the character at index `i` (0-based) as a single-character string. Returns `""` if `i` is out of bounds.
-- Maximum length of 128 characters. Extra characters are discarded.
+Arrays are globally scoped and fixed-size. All array storage is statically allocated — no dynamic allocation occurs at runtime.
+
+#### Declaration
+
+A global array is declared by naming it with a size at the top level of the program (not inside a block):
+
+```
+buf[32]
+```
+
+This creates a global array `buf` with 32 integer elements, all initialised to `0`. A name may only be declared once.
+
+🔲 _Fixed limits (max array count, max size per array, total element pool) are TBD and will be defined as named constants._
+
+#### Indexing
+
+Elements are read and written with bracket syntax:
+
+```
+buf[0] = 65      // write
+x = buf[i]       // read
+buf[i] += 1      // compound assignment
+```
+
+Out-of-bounds reads return `0`. Out-of-bounds writes are silently ignored.
+
+#### Length
+
+The `.length` property returns the declared size of the array as an integer:
+
+```
+n = buf.length   // n == 32
+```
+
+#### String Literals
+
+A string literal is compile-time syntax that defines a read-only array of char codes, null-terminated (the final element is always `0`). String literals may appear wherever an array reference is expected, most notably as an argument to `print`:
+
+```
+print("hello", 0, 0, 1)
+```
+
+The compiler interns all unique string literals into an array literal table embedded in the compiled binary. Each literal is accessible as a read-only array reference at runtime. Element assignment to a literal array reference is a silent no-op.
+
+Escape sequences: `\\` — literal backslash; `\"` — literal double quote. ASCII characters only (codes 32–127); non-ASCII source characters are a compile error.
+
+🔲 _Maximum literal length is TBD._
+
+#### Char Literals
+
+A single-character literal evaluates to the ASCII code of the character as an integer. This is purely compile-time syntactic sugar:
+
+```
+buf[0] = 'A'            // equivalent to buf[0] = 65
+if (buf[i] == 'a') { }
+```
+
+Only printable ASCII characters (codes 32–127) are valid. The only escape sequences are `'\\'` (backslash, code 92) and `'\''` (single quote, code 39).
 
 ### 2.9 Comments
 
@@ -245,7 +299,10 @@ Draw a line from `(x0, y0)` to `(x1, y1)`.
 ```
 print(text, x, y, c)
 ```
-Render `text` starting at pixel `(x, y)` in colour `c` on a single line (no text wrap and no line breaks). Integer values are converted to their decimal string representation.
+Render `text` starting at pixel `(x, y)` in colour `c` on a single line (no text wrap and no line breaks).
+
+- If `text` is an integer, it is converted to its decimal representation before rendering.
+- If `text` is an array reference (including an inline string literal), elements are interpreted as char codes and rendered until a `0` (null terminator) is encountered or the end of the array is reached.
 
 - Font: **Monogram** by Datagoblin. Glyph cell is 5×5px for lowercase, with a 2px ascender zone and 2px descender zone, giving a full character height of 9px. Full ASCII printable range supported.
 - Characters rendered outside screen bounds are silently clipped.
@@ -315,10 +372,12 @@ Cart Utilities allow to inspect and load available cart files. This allows multi
 **API:**
 
 ```
-cartcount()         // number of available cart files
-cartmeta(i, field)  // returns the string value of the requested metadata field or empty string for invalid cart index or non-existent field
-loadcart(i)         // if cart at index exists, exit current cart and load the requested cart; returns 0 otherwise
+cartcount()              // number of available cart files
+cartmeta(i, field, arr)  // fills arr with the value of the requested metadata field (null-terminated char codes); returns the length written, or 0 for an invalid cart index or non-existent field
+loadcart(i)              // if cart at index exists, exit current cart and load the requested cart; returns 0 otherwise
 ```
+
+`field` is an array reference (typically an inline string literal) naming the metadata key. The value is written into `arr` as null-terminated char codes; `arr` must be large enough to hold the result.
 
 ---
 
@@ -387,7 +446,7 @@ Unknown `@keys` are ignored by the runtime.
 
 - Maximum cart **source** size: **65 536 bytes** (64 KB).
 - Maximum compiled **bytecode** size: **16 384 bytes** (16 KB).
-- Maximum unique **string literals** per cart: 32 (see §6.3).
+- Maximum unique **array literals** per cart: 🔲 _TBD (see §6.3)._
 
 ### 4.6 Compiled Cart Format
 
@@ -406,8 +465,8 @@ All multi-byte integers are little-endian.
 | 5 | 1 B | Flags: `0` (reserved) |
 | 6 | 2 B | Metadata block length _N_ |
 | 8 | _N_ B | Metadata block (raw text, ignored by runtime) |
-| 8+_N_ | 1 B | String count (0–32) |
-| … | … | String table: for each entry: `[len: u8][chars: len bytes]` (not null-terminated) |
+| 8+_N_ | 1 B | Array literal count (0–🔲) |
+| … | … | Array literal table: for each entry: `[len: u8][elements: len bytes]` (char codes; null-terminated; last byte is always `0`) |
 | … | 2 B | `init_off` — bytecode offset of `init()` body (`0xFFFF` = not defined) |
 | … | 2 B | `update_off` |
 | … | 1 B | `update` `frame` parameter slot (global variable index, `0xFF` = not bound) |
@@ -430,10 +489,10 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 | Opcode | Hex | Operands | Description |
 |---|---|---|---|
 | `PUSH_INT` | `0x00` | `i32` | Push 32-bit integer constant |
-| `PUSH_STR` | `0x01` | `u8` | Push string literal by table index (0–31) |
+| `PUSH_ARR` | `0x01` | `u8` | Push read-only array literal reference by table index |
 | `LOAD` | `0x02` | `u8` | Push global variable by slot (0–63) |
 | `STORE` | `0x03` | `u8` | Pop → global variable slot |
-| `ADD` | `0x10` | — | Pop b, pop a; push `a + b` (string concatenation if either is a string) |
+| `ADD` | `0x10` | — | Pop b, pop a; push `a + b` |
 | `SUB` | `0x11` | — | Push `a - b` |
 | `MUL` | `0x12` | — | Push `a * b` |
 | `DIV` | `0x13` | — | Push `a / b`; push `0` if `b == 0` |
@@ -444,7 +503,7 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 | `BXOR` | `0x22` | — | Push `a ^ b` |
 | `SHL` | `0x23` | — | Push `a << (b & 31)` |
 | `SHR` | `0x24` | — | Push `a >> (b & 31)` |
-| `EQ` | `0x30` | — | Push `1` if `a == b`, else `0` (string content comparison) |
+| `EQ` | `0x30` | — | Push `1` if `a == b`, else `0` |
 | `NE` | `0x31` | — | Push `1` if `a != b`, else `0` |
 | `LT` | `0x32` | — | Push `1` if `a < b`, else `0` |
 | `LE` | `0x33` | — | Push `1` if `a <= b`, else `0` |
@@ -452,6 +511,10 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 | `GE` | `0x35` | — | Push `1` if `a >= b`, else `0` |
 | `NOT` | `0x36` | — | Pop a; push `1` if `a == 0`, else `0`. Two in sequence normalise any value to `0` or `1`. |
 | `POP` | `0x40` | — | Discard top of stack |
+| `DUP` | `0x41` | — | Duplicate top of stack |
+| `ARR_GET` | `0x70` | `u8 slot` | Pop index; push element at that index from global array at `slot`. Pushes `0` if out of bounds. |
+| `ARR_SET` | `0x71` | `u8 slot` | Pop value (top), pop index (next); write value into global array at `slot` at that index. No-op if out of bounds. |
+| `ARR_LEN` | `0x72` | `u8 slot` | Push the declared length of the global array at `slot`. |
 | `JUMP` | `0x50` | `i16` | Unconditional relative jump |
 | `JUMP_T` | `0x51` | `i16` | Pop; jump if nonzero |
 | `JUMP_F` | `0x52` | `i16` | Pop; jump if zero |
@@ -462,9 +525,20 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 
 #### Compound assignment compilation
 
-Compound assignments (`+=`, `-=`, `*=`, `/=`) compile to `LOAD slot` + arithmetic opcode + `STORE slot`. No dedicated compound-assignment opcodes exist.
+Compound assignments (`+=`, `-=`, `*=`, `/=`) on scalar variables compile to `LOAD slot` + arithmetic opcode + `STORE slot`. No dedicated compound-assignment opcodes exist.
 
 `++` and `--` (both prefix and postfix forms) compile identically to `LOAD slot` + `PUSH_INT 1` + `ADD`/`SUB` + `STORE slot`.
+
+Compound assignments on array elements (`arr[i] += v`) compile to:
+```
+<eval i>
+DUP
+ARR_GET slot
+<eval v>
+<arithmetic opcode>
+ARR_SET slot
+```
+`DUP` keeps the index on the stack so it is available for both the `ARR_GET` (read) and `ARR_SET` (write).
 
 #### Short-circuit compilation
 
@@ -611,36 +685,30 @@ The RP2040 provides **264 KB SRAM** total.
 |---|---|---|
 | Firmware / runtime | ~100 KB | Interpreter, built-ins, USB stack, SDK |
 | Cart bytecode buffer | 16 KB | Compiled cart loaded from flash |
-| String literal table | ~4 KB | 32 strings × 128 bytes |
-| Global variable table (live + 2 audio shadows) | ~2 KB | 3 × 64 vars × ~8 bytes |
-| String scratch pool | ~1 KB | 8 slots × 128 bytes |
+| Array literal table | 🔲 TBD | Read-only arrays from string literals |
+| Global variable table (live + 2 audio shadows) | ~768 B | 3 × 64 vars × 4 bytes (integers only; no type tags) |
+| Global array pool | 🔲 TBD | Mutable arrays declared by the cart |
 | Framebuffer | 1 KB | 128×64 × 1 bit (8 pages × 128 bytes) |
 | Evaluation stacks | ~512 B | 2 × 32 slots — core 0 and core 1 |
 | Free / reserved | remainder | |
 
-Total consumed ≈ ~125 KB, leaving ~140 KB free.
+🔲 _Total budget pending finalisation of array pool limits._
 
 ### 6.2 Variable Table
 
-Maximum **64 global variables** per cart. Variable names are resolved to slot indices (0–63) at compile time and are not stored at runtime. Each slot holds a tagged value: a 1-byte type tag (`INT` or `STR`) and a 4-byte payload (32-bit integer, or a string table index). Three copies of the table exist in memory at all times: the live table (core 0) and two shadow copies for lock-free audio reads (see §5.3).
+Maximum **64 global integer variables** per cart. Variable names are resolved to slot indices (0–63) at compile time and are not stored at runtime. Each slot holds a 4-byte signed 32-bit integer. No type tags are needed: the compiler statically distinguishes integer variables from array declarations, and array data is stored separately in the array pool (§6.3). Three copies of the table exist in memory at all times: the live table (core 0) and two shadow copies for lock-free audio reads (see §5.3).
 
-### 6.3 String Storage
+### 6.3 Array Storage
 
-All string literals in a cart are known at compile time. The compiler collects every unique string literal from the source and stores them in a **string table** embedded in the compiled cart binary. At runtime, string values are references into this table — no heap allocation occurs.
-- **Maximum string length:** 128 characters. Literals exceeding this limit are silently truncated to their first 128 characters at compile time.
-- **Maximum unique string literals per cart:** 32. The compiler errors if this limit is exceeded.
-- **Concatenation:** The + operator and char() produce new strings at runtime. Results are capped at 128 characters; excess characters are discarded.
+All arrays are globally declared and statically sized. The runtime maintains two array regions:
 
-**Runtime string allocation — scratch buffer:**
+**Array literal table (read-only):** All unique string literals in a cart are known at compile time. The compiler collects them and embeds them as a read-only table in the compiled binary. Each entry is a null-terminated sequence of char codes. At runtime these are accessible as read-only array references; element assignment to a literal is a silent no-op.
 
-Runtime-produced strings are allocated from a **fixed scratch buffer**: a small pool of slots (e.g. 8 × 128 bytes) managed as a stack. This approach is recommended over runtime interning for three reasons:
-- Hardware fit: memory usage is static and fully predictable at compile time.
-- Implementation simplicity: no deduplication logic, no hash map, no table mutation at runtime.
-- Function call compatibility: if user-defined functions are added later, scratch slots can be scoped to the call frame and released automatically on return, with no GC or ref-counting required.
+**Global array pool (mutable):** Arrays declared with `name[N]` syntax are allocated in declaration order from a flat mutable pool. All elements are initialised to `0` at cart load time. The pool is a contiguous block of integer storage subdivided at compile time — no dynamic allocation occurs.
 
-The main constraint is that dynamic strings must not be held across frames or call boundaries. Given the current feature set this is acceptable, and can be enforced by convention or a future linting pass.
+🔲 _Fixed limits (max total arrays including literals, max elements per array, total pool size in integers) are TBD and will be exposed as named constants in the language._
 
-The scratch pool has **8 slots** of 128 bytes each (~1 KB total). The pool is reset (all slots freed) at the start of each lifecycle function call (`init`, `update`, `draw`, `audio`). Allocation uses a ring-buffer strategy: when all 8 slots are in use, the next allocation reuses the oldest slot (overwriting it). Dynamic strings must therefore not be held across lifecycle call boundaries.
+Arrays are **not** included in the variable table shadow copies (§6.2). Array data is shared between core 0 and core 1 without synchronisation. Carts must avoid writing to arrays from `audio(t)` to prevent torn reads.
 
 ### 6.4 Evaluation Stack
 
@@ -716,3 +784,6 @@ Remaining decisions before this spec is considered stable.
 | 1 | 5.4 | Runtime error behaviour (parse errors, runtime errors, stack overflow) |
 | 2 | 7.1 | Clock speed — default 125 MHz or overclocked? |
 | 3 | 7.4 | RC filter values for audio output |
+| 4 | 2.8 / 6.3 | Array limits: max array count, max elements per array, total pool size (to be defined as named constants) |
+| 5 | 2.8 | Maximum string literal length |
+| 6 | 6.3 | Does `.length` on a string literal include the null terminator? |
