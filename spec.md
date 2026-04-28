@@ -5,8 +5,8 @@
 > Sections marked 🔲 are placeholders pending design decisions.
 > Sections marked ✅ are considered stable.
 
-**Spec version:** 0.1  
-**Last updated:** 2026-04-23
+**Spec version:** 0.2  
+**Last updated:** 2026-04-28
 
 ---
 
@@ -512,7 +512,7 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 **Tooling:**
 - The reference compiler takes a `.bdcart` source file and produces a `.bdb` compiled cart binary.
 - No packaging step is required to combine firmware and carts — they are deployed independently.
-- 🔲 *TBD — whether the compiler is a standalone CLI or integrated into a web-based editor.*
+- The reference compiler is a **standalone JavaScript CLI** (`compiler/compiler.js`). It takes a `.bdcart` source file and writes a `.bdb` binary.
 
 ---
 
@@ -523,11 +523,12 @@ Firmware and carts are deployed separately via two distinct mechanisms.
 On power-on or reset:
 
 1. Runtime initialises display, input, and audio subsystems.
-2. Attempt to load and validate `boot.bdb` from cart storage.
-3. If load or validation fails, display an error message and prompt: _"Press any key to load built-in boot cart."_ Wait for any button press, then load the built-in cart loader instead.
-4. Global variable table is initialised (empty).
-5. `init()` is called once, if defined.
-6. Main loop begins.
+2. If any button is held at boot, the device enters **USB storage mode**: a mass-storage interface is presented over USB and the device loops until unplugged or reset. Normal cart execution does not occur.
+3. Attempt to load and validate `boot.bdb` from cart storage.
+4. If load or validation fails, display an error message and prompt: _"Press any button to continue."_ Wait for any button press, then load the built-in cart loader instead.
+5. Global variable table is initialised (empty).
+6. `init()` is called once, if defined.
+7. Main loop begins.
 
 ### 5.2 Main Loop
 
@@ -553,8 +554,7 @@ The runtime targets **30 frames per second**. Each frame:
 
 Example: `input & 1` tests Left; `input & 16` tests A. `btn()` and `btnp()` remain available as a convenience API on top of this bitfield.
 
-**Overrun behaviour:** If `update()` + `draw()` take longer than one frame period:  
-🔲 _TBD — skip draw, drop frame, or run as fast as possible?_
+**Overrun behaviour:** If `update()` + `draw()` + display flush take longer than one frame period (33 ms), the next frame starts immediately with no delay. No frames are dropped and `draw()` is never skipped. Under sustained overrun, the effective frame rate falls below 30 fps.
 
 ### 5.3 Audio Callback
 
@@ -581,7 +581,7 @@ Example: `input & 1` tests Left; `input & 16` tests A. `btn()` and `btnp()` rema
 | Core 0 | Main loop: `init()`, `update()`, `draw()`, display flush, USB, input polling |
 | Core 1 | Audio callback: `audio(t)`, DAC/PWM output |
 
-🔲 *TBD — define behaviour if `audio(t)` execution exceeds one sample period (i.e. takes longer than ~45µs). Options: output silence for the overrun sample, repeat the previous sample, or halt with a runtime error.*
+**Audio overrun:** Core 1 uses a busy-wait loop that outputs one sample then spins until 45 µs have elapsed. If `audio(t)` itself takes longer than 45 µs, the busy-wait period shrinks to zero and the next sample starts immediately. No silence is inserted, no error is raised; the effective sample rate degrades proportionally to the overrun.
  
 ### 5.4 Error Handling
 
@@ -607,22 +607,22 @@ Example: `input & 1` tests Left; `input & 16` tests A. `btn()` and `btnp()` rema
 
 The RP2040 provides **264 KB SRAM** total.
 
-🔲 _TBD — full allocation pending firmware implementation._
-
 | Region | Size | Notes |
 |---|---|---|
-| Firmware / runtime | ~100 KB | Interpreter, built-ins, USB stack |
-| Framebuffer | 1 KB | 128×64 × 1 bit |
-| Audio ring buffer | 🔲 TBD | |
-| Cart opcode buffer | 🔲 TBD | Compiled cart loaded from flash |
-| Variable table | ~1 KB | 64 variables × (name + value) |
-| String storage | 🔲 TBD | Interned or stack-allocated |
-| Call stack | 🔲 TBD | |
+| Firmware / runtime | ~100 KB | Interpreter, built-ins, USB stack, SDK |
+| Cart bytecode buffer | 16 KB | Compiled cart loaded from flash |
+| String literal table | ~4 KB | 32 strings × 128 bytes |
+| Global variable table (live + 2 audio shadows) | ~2 KB | 3 × 64 vars × ~8 bytes |
+| String scratch pool | ~1 KB | 8 slots × 128 bytes |
+| Framebuffer | 1 KB | 128×64 × 1 bit (8 pages × 128 bytes) |
+| Evaluation stacks | ~512 B | 2 × 32 slots — core 0 and core 1 |
 | Free / reserved | remainder | |
+
+Total consumed ≈ ~125 KB, leaving ~140 KB free.
 
 ### 6.2 Variable Table
 
-Maximum **64 global variables** per cart. Each variable stores either a 32-bit integer or a string reference.
+Maximum **64 global variables** per cart. Variable names are resolved to slot indices (0–63) at compile time and are not stored at runtime. Each slot holds a tagged value: a 1-byte type tag (`INT` or `STR`) and a 4-byte payload (32-bit integer, or a string table index). Three copies of the table exist in memory at all times: the live table (core 0) and two shadow copies for lock-free audio reads (see §5.3).
 
 ### 6.3 String Storage
 
@@ -640,11 +640,13 @@ Runtime-produced strings are allocated from a **fixed scratch buffer**: a small 
 
 The main constraint is that dynamic strings must not be held across frames or call boundaries. Given the current feature set this is acceptable, and can be enforced by convention or a future linting pass.
 
-🔲 TBD — exact number of scratch slots and eviction behaviour when the pool is exhausted (silent truncation, runtime error, or oldest-slot reuse).
+The scratch pool has **8 slots** of 128 bytes each (~1 KB total). The pool is reset (all slots freed) at the start of each lifecycle function call (`init`, `update`, `draw`, `audio`). Allocation uses a ring-buffer strategy: when all 8 slots are in use, the next allocation reuses the oldest slot (overwriting it). Dynamic strings must therefore not be held across lifecycle call boundaries.
 
-### 6.4 Call Stack
+### 6.4 Evaluation Stack
 
-🔲 _TBD — maximum call depth. Suggested: 32 frames._
+The VM uses a per-core operand stack of **32 slots** (one for core 0, one for core 1). Stack overflow is not checked in v1; exceeding 32 operands in a single expression causes undefined behaviour.
+
+There is no traditional call stack in v1: the four lifecycle functions are direct entry points, not called from one another, and user-defined functions are not supported. The "call depth" is therefore always 1.
 
 ---
 
@@ -656,31 +658,42 @@ The main constraint is that dynamic strings must not be held across frames or ca
 ### 7.1 Microcontroller
 
 - **Target:** Raspberry Pi Pico (RP2040)
-- Clock speed: 🔲 _TBD — default 125 MHz or overclocked._
+- Clock speed: 🔲 _TBD — default SDK clock is 125 MHz; overclocking not yet evaluated._
 - Flash: 2 MB (cart storage and firmware)
 
 ### 7.2 Display
 
 - Resolution: 128 × 64 pixels, monochrome
-- Interface: SPI or I²C are both supported. SPI is recommended for speed.
-- Compatible controllers: SSD1306 (OLED), ST7565 (LCD)
-- Pinout: 🔲 _TBD_
+- Interface: I²C at 400 kHz (fast mode)
+- Controller: SSD1306 OLED, I²C address `0x3C`
+- Pins: SDA = GP4, SCL = GP5
 
 ### 7.3 Input
 
 - 6 tact switches, momentary normally-open
-- Wiring: 🔲 _TBD — active-low with internal pull-up, or external pull-down._
-- Debounce: handled in firmware (🔲 _TBD — debounce interval in ms_)
-- GPIO assignments: 🔲 _TBD_
+- Wiring: active-low, internal pull-up resistors enabled on the Pico
+- GPIO assignments:
+
+| Button | GPIO |
+|---|---|
+| Left | GP6 |
+| Right | GP7 |
+| Up | GP8 |
+| Down | GP9 |
+| A | GP10 |
+| B | GP11 |
+
+- Debounce: no software debounce in v1 — buttons are sampled once per frame (~33 ms). Mechanical debounce on the PCB is recommended.
 
 ### 7.4 Audio Output
 
 - Sample rate: 22 050 Hz
-- Bit depth: 8
+- Bit depth: 8-bit unsigned [0, 255]; 128 = silence (midpoint)
 - Output method: PWM with RC filter
+- PWM configuration: wrap = 255 (8-bit resolution), clkdiv = 1.0 → carrier ≈ 488 kHz
 - Output impedance target: suitable for 1W 8Ω speaker or 3.5mm line out
+- GPIO assignment: GP28 (current firmware default)
 - RC filter values: 🔲 _TBD_
-- GPIO assignment: 🔲 _TBD_
 
 ### 7.5 Power
 
@@ -696,17 +709,10 @@ The main constraint is that dynamic strings must not be held across frames or ca
 
 ## Appendix A — Open Questions
 
-A consolidated list of decisions that need to be made before this spec is considered stable.
+Remaining decisions before this spec is considered stable.
 
 | # | Section | Question |
 |---|---|---|
-| 6 | 4.5 | Max cart source size |
-| 7 | 4.6 | Opcode set design (stack vs register machine, instruction width) |
-| 8 | 4.7 | Flash memory layout; cart slot size; on-device cart selection UI |
-| 9 | 5.2 | Overrun behaviour |
-| 11 | 5.4 | Runtime error behaviour |
-| 12 | 6.1 | Full SRAM allocation |
-| 13 | 6.3 | String storage strategy and maximum string length |
-| 14 | 6.4 | Call stack depth |
-| 16 | 7.3 | Button wiring and debounce interval |
-| 17 | 7.4 | Audio output method and RC filter values |
+| 1 | 5.4 | Runtime error behaviour (parse errors, runtime errors, stack overflow) |
+| 2 | 7.1 | Clock speed — default 125 MHz or overclocked? |
+| 3 | 7.4 | RC filter values for audio output |
