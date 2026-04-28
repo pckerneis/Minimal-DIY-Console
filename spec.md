@@ -268,7 +268,8 @@ No dedicated audio built-ins are planned for v1. Audio synthesis is expected to 
 
 ### 3.6 Persistence
 
-Each cart has a dedicated save block of **4 × 32-bit integer slots**, persisted to flash and identified by the cart's `@id` metadata field.
+Each cart has a dedicated save block of **4 × 32-bit integer slots**, persisted to flash
+and identified by the cart's `@id` metadata field.
 
 **API:**
 
@@ -290,13 +291,40 @@ Each cart must declare a unique ID in its metadata block:
 // @id my-cart-v1
 ```
 
-- The runtime uses `@id` to locate the cart's save block in flash.
-- If `@id` is absent and `save()` or `load()` are called, the compiler emits a warning and persistence is disabled at runtime.
-- Duplicate `@id` values across carts result in shared save data — the author is responsible for uniqueness.
+- `@id` must be 1–32 ASCII printable characters (codes 32–126). Longer values are a
+  compile-time error.
+- If `@id` is absent and `save()` or `load()` are called, the compiler emits a warning
+  and persistence is disabled at runtime.
+- Uniqueness is the author's responsibility. Two carts with identical `@id` values share
+  the same save entry.
 
 **Storage layout:**
 
-With a maximum of 32 cart slots and 4 × 4-byte values each, total save data is **512 bytes**, fitting within a single 4 KB flash erase page. One page is dedicated exclusively to save data, laid out as a flat array of 32 entries of 16 bytes each, indexed by a hash of `@id`.
+Save data occupies a single dedicated 4 KB flash erase page. It is structured as a flat
+array of **32 entries**, each 48 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 32 B | `id` — the cart's `@id` string, null-padded to 32 bytes |
+| 32 | 16 B | `values` — 4 × 32-bit signed integers, little-endian |
+
+Total: 32 × 48 = 1 536 bytes, comfortably within one 4 KB page.
+
+An entry is considered **free** if its first byte is `0x00`.
+
+**Save entry lookup:**
+
+On any `save()` or `load()` call, the runtime performs a linear scan (at most 32
+iterations) over the save page:
+
+1. If an entry whose `id` field matches the current cart's `@id` is found, that entry
+   is used.
+2. If no match is found and the operation is `load()`, return `0`.
+3. If no match is found and the operation is `save()`, allocate the first free entry,
+   write the `@id` into its `id` field, then write the value.
+4. If no match is found, no free entry exists, and the operation is `save()`, the call
+   is a silent no-op. A runtime warning is displayed if a warning output channel is
+   available.
 
 **Flash write strategy:**
 
@@ -306,7 +334,14 @@ With a maximum of 32 cart slots and 4 × 4-byte values each, total save data is 
 - **Graceful shutdown** (soft reset or power button, if available)
 - **USB connect** (before the storage interface is mounted, to avoid flash contention)
 
-Power loss between a `save()` call and a flush will result in the last unsaved values being lost. This is acceptable for v1.
+Power loss between a `save()` call and a flush will result in the last unsaved values
+being lost. This is acceptable for v1.
+
+**Entry lifecycle:**
+
+There is no `delete` operation in v1. Once a save entry is allocated for a given `@id`,
+it persists until the save page is manually erased (e.g. by a firmware-level reset
+utility). Future versions may introduce an explicit `clearsave()` built-in.
 
 ### 3.7 Cart utilities
 
@@ -563,7 +598,7 @@ Example: `input & 1` tests Left; `input & 16` tests A. `btn()` and `btnp()` rema
 - `t` is the **absolute sample index** since boot, as a 32-bit integer. Wraps at 2³²−1 (~53 hours of audio).
 - The return value of `audio(t)` is the output sample as an **unsigned 8-bit integer in the range [0, 255]**. Values outside this range are clamped.
 - `audio(t)` may call math utility functions (`abs`, `min`, `max`, etc.) but may not call any graphics, input, or persistence built-ins.
-- `audio(t)` must not write to any global variable. This constraint is enforced by convention in v1; a compile-time check may be added later.
+- `audio(t)` must not write to any global variable. This constraint is enforced at compile time.
 
 **Global variable access — shadow copy:**
 
