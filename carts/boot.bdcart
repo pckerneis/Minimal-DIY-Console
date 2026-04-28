@@ -2,9 +2,11 @@
 // @author pckerneis
 // @id bidule_splash_pckerneis_1
 
+idbuf[16]
+
 draw(frame) {
     cls(0)
-  
+
     for(i = 0; i < 12; i++) {
         l = 4161
         if (i > 3) l = 54635
@@ -21,14 +23,14 @@ draw(frame) {
         }
     }
 
-
     if (frame > 40) print("01", 90, 46, 1)
 }
 
 update(frame) {
-    if (frame>90) {
+    if (frame > 90) {
         for (i=0; i<cartcount(); i++) {
-            if (cartmeta(i, "id") == "cart_loader") {
+            cartmeta(i, "id", idbuf)
+            if (streq(idbuf, "cart_loader")) {
                 loadcart(i)
             }
         }

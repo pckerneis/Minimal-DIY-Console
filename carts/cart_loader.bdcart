@@ -2,6 +2,8 @@
 // @author pckerneis
 // @id cart_loader
 
+namebuf[32]
+
 init() {
     sel = 0
     scroll = 0
@@ -42,11 +44,12 @@ draw(frame) {
         idx = scroll + i
         if (idx >= n) break
         y = 13 + i*10
+        cartmeta(idx, "name", namebuf)
         if (idx == sel) {
             rectfill(0, y-1, 128, 10, 1)
-            print(cartmeta(idx, "name"), 2, y, 0)
+            print(namebuf, 2, y, 0)
         } else {
-            print(cartmeta(idx, "name"), 2, y, 1)
+            print(namebuf, 2, y, 1)
         }
     }
 

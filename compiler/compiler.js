@@ -5,22 +5,27 @@
 // ─── Opcode table (mirrors firmware/runtime/vm.h) ────────────────────────────
 
 const OP = {
-  PUSH_INT:    0x00,
-  PUSH_STR:    0x01,
-  LOAD:        0x02,
-  STORE:       0x03,
-  ADD:         0x10,  SUB:         0x11,  MUL:         0x12,
-  DIV:         0x13,  MOD:         0x14,  NEG:         0x15,
-  BAND:        0x20,  BOR:         0x21,  BXOR:        0x22,
-  SHL:         0x23,  SHR:         0x24,
-  EQ:          0x30,  NE:          0x31,  LT:          0x32,
-  LE:          0x33,  GT:          0x34,  GE:          0x35,
-  NOT:         0x36,
-  POP:         0x40,
-  JUMP:        0x50,  JUMP_T:      0x51,  JUMP_F:      0x52,
-  PEEK_JUMP_T: 0x53,  PEEK_JUMP_F: 0x54,
-  CALL:        0x60,
-  RET:         0xFF,
+  PUSH_INT:     0x00,
+  PUSH_ARR:     0x01,   // [u8]  push literal array ref by table index
+  LOAD:         0x02,   // [u8]  push global variable by slot
+  STORE:        0x03,   // [u8]  pop → global variable slot
+  ADD:          0x10,  SUB:          0x11,  MUL:  0x12,
+  DIV:          0x13,  MOD:          0x14,  NEG:  0x15,
+  BAND:         0x20,  BOR:          0x21,  BXOR: 0x22,
+  SHL:          0x23,  SHR:          0x24,
+  EQ:           0x30,  NE:           0x31,  LT:   0x32,
+  LE:           0x33,  GT:           0x34,  GE:   0x35,
+  NOT:          0x36,
+  POP:          0x40,
+  DUP:          0x41,   // duplicate top of stack
+  JUMP:         0x50,  JUMP_T:       0x51,  JUMP_F:       0x52,
+  PEEK_JUMP_T:  0x53,  PEEK_JUMP_F:  0x54,
+  CALL:         0x60,
+  ARR_GET:      0x70,   // [u8 slot]  pop index; push arr[slot][index]   (0 if OOB)
+  ARR_SET:      0x71,   // [u8 slot]  pop value (top), pop index; write  (no-op if OOB)
+  ARR_LEN:      0x72,   // [u8 slot]  push declared length of arr[slot]
+  PUSH_ARR_MUT: 0x73,   // [u8 slot]  push mutable array reference
+  RET:          0xFF,
 };
 
 // ─── Built-in table ───────────────────────────────────────────────────────────
@@ -42,12 +47,12 @@ const BUILTINS = {
   clamp:     { id: 10, argc: 3, returns: true,  audioOk: true  },
   seed:      { id: 11, argc: 1, returns: false, audioOk: false },
   rnd:       { id: 12, argc: 1, returns: true,  audioOk: true  },
-  len:       { id: 13, argc: 1, returns: true,  audioOk: false },
-  char:      { id: 14, argc: 2, returns: true,  audioOk: false },
+  streq:     { id: 13, argc: 2, returns: true,  audioOk: false },
+  arreq:     { id: 14, argc: 3, returns: true,  audioOk: false },
   save:      { id: 15, argc: 2, returns: false, audioOk: false },
   load:      { id: 16, argc: 1, returns: true,  audioOk: false },
   cartcount: { id: 17, argc: 0, returns: true,  audioOk: false },
-  cartmeta:  { id: 18, argc: 2, returns: true,  audioOk: false },
+  cartmeta:  { id: 18, argc: 3, returns: true,  audioOk: false },
   loadcart:  { id: 19, argc: 1, returns: true,  audioOk: false },
 };
 
@@ -93,7 +98,7 @@ function lex(src) {
       continue;
     }
 
-    // String literals
+    // String literals — compile-time arrays of char codes
     if (ch === '"') {
       i++;
       let s = '';
@@ -102,16 +107,34 @@ function lex(src) {
           i++;
           if      (src[i] === '"')  s += '"';
           else if (src[i] === '\\') s += '\\';
-          else                      s += src[i];  // pass unknown escapes through
+          else                      s += src[i];
           i++;
         } else {
           if (src[i] === '\n') line++;
           s += src[i++];
         }
       }
-      if (i < n) i++;                              // closing "
-      if (s.length > 128) s = s.slice(0, 128);    // §2.8 truncation
+      if (i < n) i++;  // closing "
       tokens.push({ type: 'STR', value: s, line });
+      continue;
+    }
+
+    // Char literals 'x' — compile-time integer (ASCII code)
+    if (ch === "'") {
+      i++;
+      let code = 0;
+      if (src[i] === '\\') {
+        i++;
+        if      (src[i] === '\\') code = 92;
+        else if (src[i] === "'")  code = 39;
+        else                      code = src.charCodeAt(i);
+        i++;
+      } else {
+        code = src.charCodeAt(i);
+        i++;
+      }
+      if (src[i] === "'") i++;  // closing '
+      tokens.push({ type: 'NUM', value: code, line });
       continue;
     }
 
@@ -156,16 +179,13 @@ class Emitter {
     this.bytes.push(v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF);
   }
 
-  // Emit a jump opcode with a placeholder offset; return the patch position.
   emitJump(op) {
     this.bytes.push(op, 0x00, 0x00);
     return this.bytes.length - 2;
   }
 
-  // Patch a jump at `patchPos` to jump to the current end of the emitter.
   patch(patchPos) { this.patchTo(patchPos, this.bytes.length); }
 
-  // Patch a jump at `patchPos` to jump to `target` (absolute byte position).
   patchTo(patchPos, target) {
     const offset = target - (patchPos + 2);
     this.bytes[patchPos]     =  offset        & 0xFF;
@@ -179,13 +199,18 @@ class Emitter {
 
 class Ctx {
   constructor() {
-    this.vars    = new Map();  // name → slot (0–63)
-    this.strings = [];         // unique string literals (0–31)
-    this.errors  = [];
-    this.warnings = [];
+    this.vars        = new Map();  // name → slot (0–63), integer variables only
+    this.arrLiterals = [];         // unique string literals (deduped), max 32
+    this.arrayDecls  = [];         // [{name, size}] in declaration order, max 16
+    this.errors      = [];
+    this.warnings    = [];
   }
 
   varSlot(name, line) {
+    if (this.arrayDecls.some(d => d.name === name)) {
+      this.errors.push(`line ${line}: '${name}' is an array; use '${name}[i]' for element access`);
+      return 0;
+    }
     if (!this.vars.has(name)) {
       if (this.vars.size >= 64) {
         this.errors.push(`line ${line}: variable limit reached (max 64)`);
@@ -196,17 +221,37 @@ class Ctx {
     return this.vars.get(name);
   }
 
-  strIndex(s, line) {
-    let idx = this.strings.indexOf(s);
+  arrLitIndex(s, line) {
+    let idx = this.arrLiterals.indexOf(s);
     if (idx === -1) {
-      if (this.strings.length >= 32) {
-        this.errors.push(`line ${line}: string literal limit reached (max 32)`);
+      if (this.arrLiterals.length >= 32) {
+        this.errors.push(`line ${line}: array literal limit reached (max 32)`);
         return 0;
       }
-      this.strings.push(s);
-      idx = this.strings.length - 1;
+      this.arrLiterals.push(s);
+      idx = this.arrLiterals.length - 1;
     }
     return idx;
+  }
+
+  declareArray(name, size, line) {
+    if (this.vars.has(name) || this.arrayDecls.some(d => d.name === name)) {
+      this.errors.push(`line ${line}: '${name}' already declared`);
+      return;
+    }
+    if (this.arrayDecls.length >= 16) {
+      this.errors.push(`line ${line}: array declaration limit reached (max 16)`);
+      return;
+    }
+    if (size < 1) {
+      this.errors.push(`line ${line}: array size must be at least 1`);
+      return;
+    }
+    this.arrayDecls.push({ name, size });
+  }
+
+  arrayIndex(name) {
+    return this.arrayDecls.findIndex(d => d.name === name);
   }
 
   error(msg)   { this.errors.push(msg); }
@@ -222,8 +267,8 @@ class Parser {
     this.ctx      = ctx;
     this.e        = emitter;
     this.inAudio  = inAudio;
-    this.breakPatchLists    = [];  // stack of patch-position arrays, one per loop
-    this.continuePatchLists = [];  // same, for continue
+    this.breakPatchLists    = [];
+    this.continuePatchLists = [];
   }
 
   peek()         { return this.tok[this.pos] || { type: 'EOF', value: 'EOF', line: 0 }; }
@@ -245,12 +290,9 @@ class Parser {
     return this.advance();
   }
 
-  // ── Block / statement body ───────────────────────────────────────────────────
-  // Supports both `{ stmts }` and a single statement without braces.
-
   parseBody() {
     if (this.checkOp('{')) {
-      this.advance();  // consume '{'
+      this.advance();
       while (!this.checkOp('}') && this.peek().type !== 'EOF') this.parseStatement();
       this.eatOp('}');
     } else {
@@ -279,12 +321,14 @@ class Parser {
 
     if (t.type === 'IDENT') {
       const next = this.tok[this.pos + 1] || {};
-      const isAssign = next.type === 'OP' && ['=', '+=', '-=', '*=', '/='].includes(next.value);
-      const isIncr   = next.type === 'OP' && ['++', '--'].includes(next.value);
-      const isCall   = next.type === 'OP' && next.value === '(';
-      if (isAssign) return this.parseAssignment();
-      if (isIncr)   return this.parsePostfixIncr();
-      if (isCall)   return this.parseCallStmt();
+      const isArrayAssign = next.type === 'OP' && next.value === '[';
+      const isAssign      = next.type === 'OP' && ['=', '+=', '-=', '*=', '/='].includes(next.value);
+      const isIncr        = next.type === 'OP' && ['++', '--'].includes(next.value);
+      const isCall        = next.type === 'OP' && next.value === '(';
+      if (isArrayAssign) return this.parseArrayAssign();
+      if (isAssign)      return this.parseAssignment();
+      if (isIncr)        return this.parsePostfixIncr();
+      if (isCall)        return this.parseCallStmt();
       this.ctx.error(`line ${t.line}: expected assignment or function call`);
       this.advance();
       return;
@@ -326,13 +370,12 @@ class Parser {
     if (this.inAudio)
       this.ctx.error(`line ${ident.line}: assignments are not allowed inside audio()`);
 
-    const op    = this.advance();   // =  +=  -=  *=  /=
-    const slot  = this.ctx.varSlot(ident.value, ident.line);
+    const op   = this.advance();   // =  +=  -=  *=  /=
+    const slot = this.ctx.varSlot(ident.value, ident.line);
 
     if (op.value === '=') {
       this.parseExpr();
     } else {
-      // Compound: load current value, eval RHS, apply op
       this.e.emit(OP.LOAD, slot);
       this.parseExpr();
       switch (op.value) {
@@ -343,6 +386,38 @@ class Parser {
       }
     }
     this.e.emit(OP.STORE, slot);
+  }
+
+  // arr[i] op= expr
+  parseArrayAssign() {
+    const ident = this.eatIdent();
+    if (this.inAudio)
+      this.ctx.error(`line ${ident.line}: assignments are not allowed inside audio()`);
+
+    this.eatOp('[');
+    this.parseExpr();   // push index onto stack
+    this.eatOp(']');
+
+    const op   = this.advance();   // =  +=  -=  *=  /=
+    const slot = this.ctx.arrayIndex(ident.value);
+    if (slot === -1)
+      this.ctx.error(`line ${ident.line}: '${ident.value}' is not a declared array`);
+
+    if (op.value !== '=') {
+      // Compound: DUP the index so ARR_GET and ARR_SET each get a copy
+      this.e.emit(OP.DUP);
+      this.e.emit(OP.ARR_GET, slot & 0xFF);
+      this.parseExpr();
+      switch (op.value) {
+        case '+=': this.e.emit(OP.ADD); break;
+        case '-=': this.e.emit(OP.SUB); break;
+        case '*=': this.e.emit(OP.MUL); break;
+        case '/=': this.e.emit(OP.DIV); break;
+      }
+    } else {
+      this.parseExpr();
+    }
+    this.e.emit(OP.ARR_SET, slot & 0xFF);
   }
 
   parseCallStmt() {
@@ -373,7 +448,6 @@ class Parser {
         this.e.emit(OP.PUSH_INT); this.e.emitI32(0);
       }
     } else {
-      // Statement context: discard return value if any
       if (b.returns) this.e.emit(OP.POP);
     }
   }
@@ -413,13 +487,11 @@ class Parser {
     const continuePatches = this.continuePatchLists.pop();
     const breakPatches    = this.breakPatchLists.pop();
 
-    // Continue → back to condition
     for (const p of continuePatches) this.e.patchTo(p, condStart);
 
     const backJump = this.e.emitJump(OP.JUMP);
     this.e.patchTo(backJump, condStart);
 
-    // Exit and break → after loop
     this.e.patch(exitJump);
     for (const p of breakPatches) this.e.patch(p);
   }
@@ -431,26 +503,34 @@ class Parser {
       return this.parsePostfixIncr();
     if (t.type === 'OP' && ['++', '--'].includes(t.value))
       return this.parsePrefixIncr();
+    if (t.type === 'IDENT' && next.type === 'OP' && next.value === '[')
+      return this.parseArrayAssign();
+    this.parseAssignment();
+  }
+
+  parseForInit() {
+    const t    = this.peek();
+    const next = this.tok[this.pos + 1] || {};
+    if (t.type === 'IDENT' && next.type === 'OP' && next.value === '[')
+      return this.parseArrayAssign();
     this.parseAssignment();
   }
 
   parseFor() {
     this.eatKw('for');
     this.eatOp('(');
-    this.parseAssignment();           // init
+    this.parseForInit();               // init
     this.eatOp(';');
 
     const condStart = this.e.length;
-    this.parseExpr();                 // condition
+    this.parseExpr();                  // condition
     this.eatOp(';');
     const exitJump = this.e.emitJump(OP.JUMP_F);
 
-    // Parse update into a side emitter so it can be emitted after the body.
-    // (All jumps inside the update are relative and remain valid when appended.)
     const savedE  = this.e;
     const updateE = new Emitter();
     this.e = updateE;
-    this.parseForUpdate();            // update: assignment or ++/--
+    this.parseForUpdate();             // update
     this.e = savedE;
     this.eatOp(')');
 
@@ -460,7 +540,6 @@ class Parser {
     const continuePatches = this.continuePatchLists.pop();
     const breakPatches    = this.breakPatchLists.pop();
 
-    // Continue target = start of update
     const continueTarget = this.e.length;
     for (const b of updateE.bytes) this.e.bytes.push(b);
     for (const p of continuePatches) this.e.patchTo(p, continueTarget);
@@ -468,7 +547,6 @@ class Parser {
     const backJump = this.e.emitJump(OP.JUMP);
     this.e.patchTo(backJump, condStart);
 
-    // Exit and break → after loop
     this.e.patch(exitJump);
     for (const p of breakPatches) this.e.patch(p);
   }
@@ -508,8 +586,6 @@ class Parser {
     this.parseBitor();
     while (this.checkOp('&&') || this.checkOp('||')) {
       const isAnd = this.advance().value === '&&';
-      // Short-circuit: peek at current TOS; if it already determines the result, skip RHS.
-      // Then normalise the result to 0/1 with NOT NOT.
       const skipJump = this.e.emitJump(isAnd ? OP.PEEK_JUMP_F : OP.PEEK_JUMP_T);
       this.e.emit(OP.POP);
       this.parseBitor();
@@ -574,9 +650,10 @@ class Parser {
       return;
     }
 
+    // String literal → read-only literal array reference
     if (t.type === 'STR') {
       this.advance();
-      this.e.emit(OP.PUSH_STR, this.ctx.strIndex(t.value, t.line));
+      this.e.emit(OP.PUSH_ARR, this.ctx.arrLitIndex(t.value, t.line));
       return;
     }
 
@@ -588,9 +665,33 @@ class Parser {
         const argc = this.parseArglist();
         this.eatOp(')');
         this._emitCall(t, argc, /* inExpr */ true);
+      } else if (this.checkOp('[')) {
+        // Array element read: arr[i]
+        this.advance();   // '['
+        const slot = this.ctx.arrayIndex(t.value);
+        if (slot === -1)
+          this.ctx.error(`line ${t.line}: '${t.value}' is not a declared array`);
+        this.parseExpr();
+        this.eatOp(']');
+        this.e.emit(OP.ARR_GET, slot & 0xFF);
+      } else if (this.checkOp('.')) {
+        // Property access — only .length is defined
+        this.advance();   // '.'
+        const prop = this.eatIdent();
+        if (prop.value !== 'length')
+          this.ctx.error(`line ${prop.line}: unknown property '${prop.value}'`);
+        const slot = this.ctx.arrayIndex(t.value);
+        if (slot === -1)
+          this.ctx.error(`line ${t.line}: '${t.value}' is not a declared array`);
+        this.e.emit(OP.ARR_LEN, slot & 0xFF);
       } else {
-        // Variable read
-        this.e.emit(OP.LOAD, this.ctx.varSlot(t.value, t.line));
+        // Bare name: array reference or scalar variable
+        const arrSlot = this.ctx.arrayIndex(t.value);
+        if (arrSlot !== -1) {
+          this.e.emit(OP.PUSH_ARR_MUT, arrSlot & 0xFF);
+        } else {
+          this.e.emit(OP.LOAD, this.ctx.varSlot(t.value, t.line));
+        }
       }
       return;
     }
@@ -604,7 +705,7 @@ class Parser {
 
     this.ctx.error(`line ${t.line}: unexpected '${t.value}' in expression`);
     this.advance();
-    this.e.emit(OP.PUSH_INT); this.e.emitI32(0);  // keep stack balanced
+    this.e.emit(OP.PUSH_INT); this.e.emitI32(0);
   }
 }
 
@@ -615,10 +716,9 @@ function compileFunction(name, params, bodyTokens, ctx) {
   const tks = [...bodyTokens, { type: 'EOF', value: 'EOF', line: 0 }];
   const p   = new Parser(tks, ctx, e, name === 'audio');
 
-  // Assign parameter names to global variable slots (§2.6: all variables are global)
   const paramSlots = params.map(pname => ctx.varSlot(pname, 0));
 
-  p.parseBody();  // parses the '{' ... '}' wrapping the function body
+  p.parseBody();
   e.emit(OP.RET);
 
   return { bytes: e.bytes, paramSlots };
@@ -629,15 +729,21 @@ function compileFunction(name, params, bodyTokens, ctx) {
 function u16le(n) { return [n & 0xFF, (n >> 8) & 0xFF]; }
 
 function assembleBinary(meta, ctx, compiled) {
-  // Metadata block — plain text, ignored by runtime
   const metaText  = Object.entries(meta).map(([k, v]) => `@${k} ${v}`).join('\n');
   const metaBytes = Array.from(metaText, c => c.charCodeAt(0) & 0x7F);
 
-  // String table
-  const strBytes = [];
-  for (const s of ctx.strings) {
-    const bs = Array.from(s, c => c.charCodeAt(0) & 0x7F);
-    strBytes.push(bs.length, ...bs);
+  // Array literal table — null-terminated char-code arrays
+  const arrLitBytes = [];
+  for (const s of ctx.arrLiterals) {
+    const codes = Array.from(s, c => c.charCodeAt(0) & 0x7F);
+    codes.push(0);                                  // null terminator
+    arrLitBytes.push(codes.length, ...codes);       // [len][chars + null]
+  }
+
+  // Array declaration table — declared sizes as u16 LE
+  const arrDeclBytes = [];
+  for (const decl of ctx.arrayDecls) {
+    arrDeclBytes.push(...u16le(decl.size));
   }
 
   // Concatenate bytecode, record offsets
@@ -665,8 +771,10 @@ function assembleBinary(meta, ctx, compiled) {
     0,                                 // flags
     ...u16le(metaBytes.length),
     ...metaBytes,
-    ctx.strings.length,
-    ...strBytes,
+    ctx.arrLiterals.length,            // array literal count
+    ...arrLitBytes,
+    ctx.arrayDecls.length,             // array declaration count
+    ...arrDeclBytes,
     ...u16le(offsets.init),
     ...u16le(offsets.update), params.update.frame, params.update.input,
     ...u16le(offsets.draw),   params.draw.frame,   params.draw.input,
@@ -699,18 +807,51 @@ export function compile(source) {
   }
   if (meta.id == null) ctx.warning('no @id metadata — persistence (save/load) will be disabled');
 
-  // ── Locate lifecycle function definitions ───────────────────────────────────
-  // Each definition: IDENT '(' params ')' block
-  // We record the slice of tokens that makes up the function body.
+  // ── Top-level: array declarations and lifecycle function definitions ─────────
+  // Array declaration:      IDENT '[' NUMBER ']'
+  // Lifecycle definition:   IDENT '(' params ')' block
 
   const fnDefs = {};
 
   while (pos < tokens.length && tokens[pos].type !== 'EOF') {
     const t = tokens[pos];
 
-    if (t.type !== 'IDENT' || !(t.value in LIFECYCLE)) {
-      ctx.error(`line ${t.line}: expected lifecycle function (init/update/draw/audio), got '${t.value}'`);
-      // Skip to the next '{' ... '}' block to attempt recovery
+    if (t.type !== 'IDENT') {
+      ctx.error(`line ${t.line}: expected array declaration or lifecycle function, got '${t.value}'`);
+      while (pos < tokens.length && !(tokens[pos].type === 'OP' && tokens[pos].value === '{')) pos++;
+      let depth = 0;
+      while (pos < tokens.length) {
+        const v = tokens[pos++].value;
+        if (v === '{') depth++;
+        else if (v === '}' && --depth === 0) break;
+      }
+      continue;
+    }
+
+    // Array declaration: IDENT '[' NUMBER ']'
+    const next = tokens[pos + 1];
+    if (next && next.type === 'OP' && next.value === '[') {
+      const nameTok = tokens[pos++];  // IDENT
+      pos++;                           // '['
+      if (tokens[pos]?.type !== 'NUM') {
+        ctx.error(`line ${nameTok.line}: expected integer size in array declaration`);
+        while (pos < tokens.length && tokens[pos].value !== ']') pos++;
+        if (pos < tokens.length) pos++;
+      } else {
+        const size = tokens[pos++].value;
+        if (tokens[pos]?.type !== 'OP' || tokens[pos].value !== ']') {
+          ctx.error(`line ${nameTok.line}: expected ']' after array size`);
+        } else {
+          pos++;  // ']'
+        }
+        ctx.declareArray(nameTok.value, size, nameTok.line);
+      }
+      continue;
+    }
+
+    // Lifecycle function definition
+    if (!(t.value in LIFECYCLE)) {
+      ctx.error(`line ${t.line}: expected lifecycle function (init/update/draw/audio) or array declaration, got '${t.value}'`);
       while (pos < tokens.length && !(tokens[pos].type === 'OP' && tokens[pos].value === '{')) pos++;
       let depth = 0;
       while (pos < tokens.length) {
@@ -725,7 +866,6 @@ export function compile(source) {
     const nameLine = t.line;
     pos++;
 
-    // Parameter list
     if (tokens[pos]?.type !== 'OP' || tokens[pos].value !== '(') {
       ctx.error(`line ${nameLine}: expected '(' after '${name}'`); continue;
     }
@@ -738,14 +878,13 @@ export function compile(source) {
     if (tokens[pos]?.type !== 'OP' || tokens[pos].value !== ')') {
       ctx.error(`line ${nameLine}: expected ')' in '${name}' parameters`);
     } else {
-      pos++;  // ')'
+      pos++;
     }
 
     if (name in fnDefs) {
       ctx.error(`line ${nameLine}: '${name}' defined more than once`);
     }
 
-    // Collect body tokens including the surrounding '{' and '}'
     if (tokens[pos]?.type !== 'OP' || tokens[pos].value !== '{') {
       ctx.error(`line ${nameLine}: expected '{' for '${name}' body`); continue;
     }
@@ -753,7 +892,7 @@ export function compile(source) {
     let depth = 0;
     while (pos < tokens.length) {
       const v = tokens[pos].value;
-      if (v === '{')                      depth++;
+      if (v === '{')                       depth++;
       else if (v === '}' && --depth === 0) { pos++; break; }
       pos++;
     }

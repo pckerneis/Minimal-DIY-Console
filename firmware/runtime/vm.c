@@ -9,25 +9,24 @@
 
 // ─── Limits ───────────────────────────────────────────────────────────────────
 
-#define MAX_VARS      64
-#define MAX_STRINGS   32
-#define MAX_STR_LEN   128
-#define MAX_BYTECODE  16384
-#define STACK_SIZE    32
-#define SCRATCH_SLOTS 8
-#define SCRATCH_BASE  32   // scratch indices occupy [32, 32+SCRATCH_SLOTS)
+#define MAX_VARS        64
+#define MAX_BYTECODE    16384
+#define STACK_SIZE      32
+#define MAX_ARR_LITS    32
+#define MAX_ARR_LIT_LEN 128
+#define MAX_ARR_DECLS   16
+#define MAX_ARR_ELEMS   128
 
 // ─── Value ───────────────────────────────────────────────────────────────────
 
-#define VALUE_INT  0
-#define VALUE_STR  1
-#define VALUE_VOID 0xFF   // sentinel: built-in returns nothing
+#define VALUE_INT     0
+#define VALUE_ARR_LIT 1   // .i = index into arrlittab (read-only literal)
+#define VALUE_ARR_MUT 2   // .i = index into arrpool   (mutable declaration)
+#define VALUE_VOID    0xFF
 
 typedef struct {
-    uint8_t type;   // VALUE_INT or VALUE_STR
-    int32_t i;      // integer value, or string index when type == VALUE_STR
-                    //   [0, MAX_STRINGS)    → string literal table
-                    //   [SCRATCH_BASE, ...) → scratch pool slot
+    uint8_t type;   // VALUE_INT, VALUE_ARR_LIT, VALUE_ARR_MUT, or VALUE_VOID
+    int32_t i;
 } Value;
 
 // ─── VM state ─────────────────────────────────────────────────────────────────
@@ -37,9 +36,15 @@ static struct {
     uint8_t  code[MAX_BYTECODE];
     uint16_t code_len;
 
-    // String literal table
-    char     strtab[MAX_STRINGS][MAX_STR_LEN + 1];
-    uint8_t  str_count;
+    // Array literal table (read-only, loaded from binary)
+    uint8_t  arrlittab[MAX_ARR_LITS][MAX_ARR_LIT_LEN + 1];  // null-terminated
+    uint8_t  arrlitlen[MAX_ARR_LITS];
+    uint8_t  arrlit_count;
+
+    // Mutable array pool (declared with name[N] syntax)
+    int32_t  arrpool[MAX_ARR_DECLS][MAX_ARR_ELEMS];
+    uint8_t  arrdeclsize[MAX_ARR_DECLS];
+    uint8_t  arrdecl_count;
 
     // Entry points (0xFFFF = lifecycle function not defined in cart)
     uint16_t off_init;
@@ -54,21 +59,16 @@ static struct {
     uint8_t  param_draw_input;
     uint8_t  param_audio_t;
 
-    // Live global variable table (core 0)
+    // Live global variable table (core 0) — integers only
     Value    globals[MAX_VARS];
 
-    // Audio shadow buffers — core 0 writes the inactive one then flips the index;
-    // core 1 reads from the active one. Single-byte flip is naturally atomic on
-    // RP2040 (Cortex-M0+); a DMB before the write ensures the memcpy is visible.
+    // Audio shadow buffers — core 0 writes inactive then flips; core 1 reads active.
+    // Single-byte flip is naturally atomic on RP2040 (Cortex-M0+); DMB before write
+    // ensures the memcpy is visible to core 1.
     Value    shadow[2][MAX_VARS];
     volatile uint8_t shadow_active;
 
-    // Runtime string scratch pool — reset at the start of each exec() call.
-    // Dynamic strings must not be held across lifecycle function boundaries (§6.3).
-    char     scratch[SCRATCH_SLOTS][MAX_STR_LEN + 1];
-    uint8_t  scratch_top;
-
-    // Per-core evaluation stacks (core 0: init/update/draw; core 1: audio)
+    // Per-core evaluation stacks
     Value    stack0[STACK_SIZE];
     Value    stack1[STACK_SIZE];
 
@@ -76,8 +76,8 @@ static struct {
     uint32_t rng;
 
     bool     loaded;
-    bool     exit_exec;     // set by loadcart to abort the current exec() call
-    bool     cart_switched; // set by loadcart; cleared by vm_cart_switched()
+    bool     exit_exec;
+    bool     cart_switched;
 } vm;
 
 // ─── Binary reading helpers ───────────────────────────────────────────────────
@@ -93,23 +93,51 @@ static inline uint16_t ru16(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
-// ─── String helpers ───────────────────────────────────────────────────────────
+// ─── Array helpers ────────────────────────────────────────────────────────────
 
-static const char *str_get(Value v) {
-    if (v.type != VALUE_STR) return "";
-    if (v.i >= SCRATCH_BASE) {
-        int s = v.i - SCRATCH_BASE;
-        return (s < SCRATCH_SLOTS) ? vm.scratch[s] : "";
+// Return element idx from any array value; 0 for out-of-bounds or non-array.
+static int32_t arr_elem(Value v, int idx) {
+    if (v.type == VALUE_ARR_LIT) {
+        int i = v.i;
+        if (i >= 0 && i < vm.arrlit_count && idx >= 0 && idx < vm.arrlitlen[i])
+            return (int32_t)vm.arrlittab[i][idx];
+        return 0;
     }
-    return (v.i < vm.str_count) ? vm.strtab[v.i] : "";
+    if (v.type == VALUE_ARR_MUT) {
+        int i = v.i;
+        if (i >= 0 && i < vm.arrdecl_count && idx >= 0 && idx < vm.arrdeclsize[i])
+            return vm.arrpool[i][idx];
+        return 0;
+    }
+    return 0;
 }
 
-static Value str_scratch(const char *s) {
-    uint8_t slot = vm.scratch_top % SCRATCH_SLOTS;
-    vm.scratch_top = slot + 1;
-    strncpy(vm.scratch[slot], s, MAX_STR_LEN);
-    vm.scratch[slot][MAX_STR_LEN] = '\0';
-    return (Value){ VALUE_STR, SCRATCH_BASE + slot };
+// Fill buf with the null-terminated string represented by an array value.
+// Interprets elements as char codes, stopping at 0 or end of array.
+static void arr_to_cstr(Value v, char *buf, int bufsize) {
+    int n = 0;
+    if (v.type == VALUE_ARR_LIT) {
+        int idx = v.i;
+        if (idx >= 0 && idx < vm.arrlit_count) {
+            int len = vm.arrlitlen[idx];
+            for (int j = 0; j < len && n < bufsize - 1; j++) {
+                uint8_t c = vm.arrlittab[idx][j];
+                if (c == 0) break;
+                buf[n++] = (char)c;
+            }
+        }
+    } else if (v.type == VALUE_ARR_MUT) {
+        int idx = v.i;
+        if (idx >= 0 && idx < vm.arrdecl_count) {
+            int size = vm.arrdeclsize[idx];
+            for (int j = 0; j < size && n < bufsize - 1; j++) {
+                int32_t c = vm.arrpool[idx][j];
+                if (c == 0) break;
+                buf[n++] = (char)(c & 0x7F);
+            }
+        }
+    }
+    buf[n] = '\0';
 }
 
 static Value exec(uint16_t entry, Value *globals, Value *stk);
@@ -139,13 +167,14 @@ static Value call_builtin(uint8_t id, Value *a) {
         display_line(a[0].i, a[1].i, a[2].i, a[3].i, a[4].i);
         return (Value){ VALUE_VOID };
     case BUILTIN_PRINT: {
-        char ibuf[16];
+        char buf[MAX_ARR_LIT_LEN + 16];
         const char *text;
         if (a[0].type == VALUE_INT) {
-            snprintf(ibuf, sizeof(ibuf), "%d", (int)a[0].i);
-            text = ibuf;
+            snprintf(buf, sizeof(buf), "%d", (int)a[0].i);
+            text = buf;
         } else {
-            text = str_get(a[0]);
+            arr_to_cstr(a[0], buf, sizeof(buf));
+            text = buf;
         }
         display_print(a[1].i, a[2].i, text, a[3].i);
         return (Value){ VALUE_VOID };
@@ -174,15 +203,24 @@ static Value call_builtin(uint8_t id, Value *a) {
         return (Value){ VALUE_INT, (int32_t)((vm.rng >> 16) % (uint32_t)n) };
     }
 
-    // Strings
-    case BUILTIN_LEN:
-        return (Value){ VALUE_INT, (int32_t)strlen(str_get(a[0])) };
-    case BUILTIN_CHAR: {
-        const char *s = str_get(a[0]);
-        int i = a[1].i, len = (int)strlen(s);
-        if (i < 0 || i >= len) return str_scratch("");
-        char buf[2] = { s[i], '\0' };
-        return str_scratch(buf);
+    // Array comparison
+    case BUILTIN_STREQ: {
+        // Compare null-terminated element sequences; arr_elem returns 0 for OOB,
+        // so mismatched lengths naturally produce inequality.
+        for (int i = 0; i <= MAX_ARR_ELEMS; i++) {
+            int32_t ea = arr_elem(a[0], i);
+            int32_t eb = arr_elem(a[1], i);
+            if (ea != eb) return (Value){ VALUE_INT, 0 };
+            if (ea == 0)  return (Value){ VALUE_INT, 1 };
+        }
+        return (Value){ VALUE_INT, 0 };
+    }
+    case BUILTIN_ARREQ: {
+        int len = (int)a[2].i;
+        for (int i = 0; i < len; i++)
+            if (arr_elem(a[0], i) != arr_elem(a[1], i))
+                return (Value){ VALUE_INT, 0 };
+        return (Value){ VALUE_INT, 1 };
     }
 
     // Persistence — flash not yet implemented; stubs return safe defaults
@@ -195,8 +233,23 @@ static Value call_builtin(uint8_t id, Value *a) {
     case BUILTIN_CARTCOUNT:
         return (Value){ VALUE_INT, cart_count() };
     case BUILTIN_CARTMETA: {
-        const char *val = cart_meta(a[0].i, str_get(a[1]));
-        return str_scratch(val);
+        // cartmeta(cart_index, field_arr, dest_arr) → length written
+        char field[32];
+        arr_to_cstr(a[1], field, sizeof(field));
+        const char *val = cart_meta(a[0].i, field);
+        int written = 0;
+        if (a[2].type == VALUE_ARR_MUT) {
+            int dest = a[2].i;
+            if (dest >= 0 && dest < vm.arrdecl_count) {
+                int size = vm.arrdeclsize[dest];
+                while (written < size - 1 && val[written]) {
+                    vm.arrpool[dest][written] = (int32_t)(unsigned char)val[written];
+                    written++;
+                }
+                if (written < size) vm.arrpool[dest][written] = 0;
+            }
+        }
+        return (Value){ VALUE_INT, written };
     }
     case BUILTIN_LOADCART: {
         uint32_t size;
@@ -225,8 +278,7 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
 
     uint16_t ip = entry;
     int      sp = 0;
-    vm.scratch_top = 0;
-    vm.exit_exec   = false;
+    vm.exit_exec = false;
 
 #define PUSH(v)    do { if (sp < STACK_SIZE) stk[sp++] = (v); } while (0)
 #define PUSH_I(n)  PUSH(((Value){ VALUE_INT, (int32_t)(n) }))
@@ -240,8 +292,9 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
         switch ((Opcode)vm.code[ip++]) {
 
         // ── Literals ─────────────────────────────────────────────────────────
-        case OP_PUSH_INT: PUSH_I(R32()); break;
-        case OP_PUSH_STR: PUSH(((Value){ VALUE_STR, R8() })); break;
+        case OP_PUSH_INT:     PUSH_I(R32()); break;
+        case OP_PUSH_ARR:     PUSH(((Value){ VALUE_ARR_LIT, R8() })); break;
+        case OP_PUSH_ARR_MUT: PUSH(((Value){ VALUE_ARR_MUT, R8() })); break;
 
         // ── Variables ────────────────────────────────────────────────────────
         case OP_LOAD: {
@@ -257,22 +310,7 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
         }
 
         // ── Arithmetic ───────────────────────────────────────────────────────
-        case OP_ADD: {
-            Value b = POP(), a = POP();
-            if (a.type == VALUE_STR || b.type == VALUE_STR) {
-                // String concatenation: result capped at MAX_STR_LEN (§2.8)
-                char buf[MAX_STR_LEN + 1];
-                const char *sa = str_get(a), *sb = str_get(b);
-                int la = (int)strlen(sa);
-                strncpy(buf, sa, MAX_STR_LEN);
-                buf[MAX_STR_LEN] = '\0';
-                if (la < MAX_STR_LEN) strncat(buf, sb, (size_t)(MAX_STR_LEN - la));
-                PUSH(str_scratch(buf));
-            } else {
-                PUSH_I(a.i + b.i);
-            }
-            break;
-        }
+        case OP_ADD: { Value b = POP(), a = POP(); PUSH_I(a.i + b.i);              break; }
         case OP_SUB: { Value b = POP(), a = POP(); PUSH_I(a.i - b.i);              break; }
         case OP_MUL: { Value b = POP(), a = POP(); PUSH_I(a.i * b.i);              break; }
         case OP_DIV: { Value b = POP(), a = POP(); PUSH_I(b.i ? a.i / b.i : 0);   break; }
@@ -287,34 +325,19 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
         case OP_SHR:  { Value b = POP(), a = POP(); PUSH_I(a.i >> (b.i & 31));  break; }
 
         // ── Comparison ───────────────────────────────────────────────────────
-        // == and != use content comparison for strings; others compare integers.
-        case OP_EQ: {
-            Value b = POP(), a = POP();
-            int r = (a.type == VALUE_STR || b.type == VALUE_STR)
-                    ? strcmp(str_get(a), str_get(b)) == 0
-                    : a.i == b.i;
-            PUSH_I(r);
-            break;
-        }
-        case OP_NE: {
-            Value b = POP(), a = POP();
-            int r = (a.type == VALUE_STR || b.type == VALUE_STR)
-                    ? strcmp(str_get(a), str_get(b)) != 0
-                    : a.i != b.i;
-            PUSH_I(r);
-            break;
-        }
+        case OP_EQ: { Value b = POP(), a = POP(); PUSH_I(a.i == b.i); break; }
+        case OP_NE: { Value b = POP(), a = POP(); PUSH_I(a.i != b.i); break; }
         case OP_LT: { Value b = POP(), a = POP(); PUSH_I(a.i <  b.i); break; }
         case OP_LE: { Value b = POP(), a = POP(); PUSH_I(a.i <= b.i); break; }
         case OP_GT: { Value b = POP(), a = POP(); PUSH_I(a.i >  b.i); break; }
         case OP_GE: { Value b = POP(), a = POP(); PUSH_I(a.i >= b.i); break; }
 
         // ── Logical NOT ──────────────────────────────────────────────────────
-        // Two in sequence (NOT NOT) normalise any nonzero value to 1 (§2.5 &&/||).
         case OP_NOT: { Value a = POP(); PUSH_I(!a.i); break; }
 
         // ── Stack ────────────────────────────────────────────────────────────
         case OP_POP: POP(); break;
+        case OP_DUP: { Value top = PEEK(); PUSH(top); break; }
 
         // ── Control flow ─────────────────────────────────────────────────────
         case OP_JUMP:       { int16_t off = R16(); ip = (uint16_t)(ip + off);                break; }
@@ -324,7 +347,6 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
         case OP_PEEK_JUMP_F:{ int16_t off = R16(); if (PEEK().i == 0) ip = (uint16_t)(ip + off); break; }
 
         // ── Built-in call ────────────────────────────────────────────────────
-        // Args were pushed left-to-right; pop in reverse to restore order.
         case OP_CALL: {
             uint8_t id   = R8();
             uint8_t argc = R8();
@@ -333,6 +355,30 @@ static Value exec(uint16_t entry, Value *globals, Value *stk) {
             Value result = call_builtin(id, args);
             if (result.type != VALUE_VOID) PUSH(result);
             if (vm.exit_exec) goto done;
+            break;
+        }
+
+        // ── Array operations ─────────────────────────────────────────────────
+        case OP_ARR_GET: {
+            uint8_t slot = R8();
+            int     idx  = (int)POP().i;
+            if (slot < vm.arrdecl_count && idx >= 0 && idx < vm.arrdeclsize[slot])
+                PUSH_I(vm.arrpool[slot][idx]);
+            else
+                PUSH_I(0);
+            break;
+        }
+        case OP_ARR_SET: {
+            uint8_t slot = R8();
+            Value   val  = POP();
+            int     idx  = (int)POP().i;
+            if (slot < vm.arrdecl_count && idx >= 0 && idx < vm.arrdeclsize[slot])
+                vm.arrpool[slot][idx] = val.i;
+            break;
+        }
+        case OP_ARR_LEN: {
+            uint8_t slot = R8();
+            PUSH_I(slot < vm.arrdecl_count ? vm.arrdeclsize[slot] : 0);
             break;
         }
 
@@ -358,10 +404,12 @@ done:
 //   [0]     4 B   magic 'B','D','B','N'
 //   [4]     1 B   format version (1)
 //   [5]     1 B   flags (reserved, must be 0)
-//   [6]     2 B   metadata block length
+//   [6]     2 B   metadata block length N
 //   [8]     N B   metadata block (ignored by runtime)
-//   [8+N]   1 B   string count (0–32)
-//           ?     string table: for each entry: [len: u8][chars: len bytes]
+//   [8+N]   1 B   array literal count
+//           ?     array literal table: [len: u8][chars: len bytes] (null-terminated)
+//           1 B   array declaration count
+//           ?     array declaration table: [size: u16 LE] per entry
 //           2 B   init_off   (0xFFFF = not defined)
 //           2 B   update_off
 //           1 B   update 'frame' param slot (0xFF = not bound)
@@ -387,18 +435,30 @@ bool vm_load(const uint8_t *bin, uint32_t len) {
     p += 2 + meta_len;
     if (p > end) return false;
 
-    // String table
+    // Array literal table
     if (p >= end) return false;
-    uint8_t nstr = *p++;
-    if (nstr > MAX_STRINGS) return false;
-    vm.str_count = nstr;
-    for (int i = 0; i < nstr; i++) {
+    uint8_t nlit = *p++;
+    if (nlit > MAX_ARR_LITS) return false;
+    vm.arrlit_count = nlit;
+    for (int i = 0; i < nlit; i++) {
         if (p >= end) return false;
-        uint8_t slen = *p++;
-        if (slen > MAX_STR_LEN || p + slen > end) return false;
-        memcpy(vm.strtab[i], p, slen);
-        vm.strtab[i][slen] = '\0';
-        p += slen;
+        uint8_t alen = *p++;
+        if (alen == 0 || alen > MAX_ARR_LIT_LEN + 1 || p + alen > end) return false;
+        memcpy(vm.arrlittab[i], p, alen);
+        vm.arrlittab[i][alen] = '\0';
+        vm.arrlitlen[i] = alen;
+        p += alen;
+    }
+
+    // Array declaration table
+    if (p >= end) return false;
+    uint8_t ndecl = *p++;
+    if (ndecl > MAX_ARR_DECLS) return false;
+    vm.arrdecl_count = ndecl;
+    for (int i = 0; i < ndecl; i++) {
+        if (p + 2 > end) return false;
+        uint16_t sz = ru16(p); p += 2;
+        vm.arrdeclsize[i] = (sz > MAX_ARR_ELEMS) ? MAX_ARR_ELEMS : (uint8_t)sz;
     }
 
     // Entry points + parameter slots (13 bytes total)
@@ -420,10 +480,10 @@ bool vm_load(const uint8_t *bin, uint32_t len) {
     vm.code_len = (uint16_t)code_len;
 
     // Reset runtime state
-    memset(vm.globals, 0, sizeof(vm.globals));
-    memset(vm.shadow,  0, sizeof(vm.shadow));
+    memset(vm.globals,  0, sizeof(vm.globals));
+    memset(vm.shadow,   0, sizeof(vm.shadow));
+    memset(vm.arrpool,  0, sizeof(vm.arrpool));
     vm.shadow_active = 0;
-    vm.scratch_top   = 0;
     vm.rng           = 12345;
     vm.loaded        = true;
     return true;

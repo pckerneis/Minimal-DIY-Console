@@ -7,9 +7,14 @@
 // Variable-width encoding: 1-byte opcode followed by inline operands.
 //
 //   OP_PUSH_INT      [i32 LE]          push 32-bit integer constant
-//   OP_PUSH_STR      [u8]              push string literal by table index (0–31)
+//   OP_PUSH_ARR      [u8]              push literal array reference by table index
 //   OP_LOAD          [u8]              push global variable by slot (0–63)
 //   OP_STORE         [u8]              pop → global variable slot
+//   OP_DUP                             duplicate top of stack
+//   OP_ARR_GET       [u8 slot]         pop index; push arr[slot][index] (0 if OOB)
+//   OP_ARR_SET       [u8 slot]         pop value (top), pop index; write (no-op if OOB)
+//   OP_ARR_LEN       [u8 slot]         push declared length of arr[slot]
+//   OP_PUSH_ARR_MUT  [u8 slot]         push mutable array reference
 //   OP_JUMP          [i16 LE]          unconditional jump, offset relative to next instruction
 //   OP_JUMP_T        [i16 LE]          pop; jump if nonzero
 //   OP_JUMP_F        [i16 LE]          pop; jump if zero
@@ -17,12 +22,13 @@
 //   OP_PEEK_JUMP_F   [i16 LE]          peek (no pop); jump if zero     — short-circuit &&
 //   OP_CALL          [u8 id][u8 argc]  call built-in; pops argc args; pushes result if non-void
 //
-// Compound assignments compile to LOAD + op + STORE (no dedicated opcodes).
+// Compound scalar assignments compile to LOAD + op + STORE.
+// Compound array assignments compile to DUP + ARR_GET + op + ARR_SET.
 
 typedef enum {
     // Literals
     OP_PUSH_INT      = 0x00,   // [i32]
-    OP_PUSH_STR      = 0x01,   // [u8]
+    OP_PUSH_ARR      = 0x01,   // [u8]  — literal array ref
     // Variables
     OP_LOAD          = 0x02,   // [u8]
     OP_STORE         = 0x03,   // [u8]
@@ -46,10 +52,11 @@ typedef enum {
     OP_LE            = 0x33,
     OP_GT            = 0x34,
     OP_GE            = 0x35,
-    // Logical NOT: nonzero→0, zero→1  (two in sequence normalise to 0/1)
+    // Logical NOT
     OP_NOT           = 0x36,
     // Stack
     OP_POP           = 0x40,
+    OP_DUP           = 0x41,
     // Control flow
     OP_JUMP          = 0x50,   // [i16]
     OP_JUMP_T        = 0x51,   // [i16]
@@ -58,6 +65,11 @@ typedef enum {
     OP_PEEK_JUMP_F   = 0x54,   // [i16]
     // Built-in call
     OP_CALL          = 0x60,   // [u8 id][u8 argc]
+    // Array operations
+    OP_ARR_GET       = 0x70,   // [u8 slot]
+    OP_ARR_SET       = 0x71,   // [u8 slot]
+    OP_ARR_LEN       = 0x72,   // [u8 slot]
+    OP_PUSH_ARR_MUT  = 0x73,   // [u8 slot]
     // Return from lifecycle function
     OP_RET           = 0xFF,
 } Opcode;
@@ -81,9 +93,9 @@ typedef enum {
     BUILTIN_CLAMP      = 10,
     BUILTIN_SEED       = 11,
     BUILTIN_RND        = 12,
-    // Strings (§2.8)
-    BUILTIN_LEN        = 13,
-    BUILTIN_CHAR       = 14,
+    // Array comparison (§2.8)
+    BUILTIN_STREQ      = 13,   // streq(a, b)       — null-terminated element compare
+    BUILTIN_ARREQ      = 14,   // arreq(a, b, len)  — fixed-length element compare
     // Persistence (§3.6)
     BUILTIN_SAVE       = 15,
     BUILTIN_LOAD_SLOT  = 16,
@@ -105,7 +117,6 @@ void vm_call_draw(int frame, uint8_t input);
 int  vm_call_audio(int t);   // returns sample in [0, 255]
 
 // Returns true (and clears the flag) if loadcart() was called this frame.
-// When true, the caller should reset its frame counter to 0.
 bool vm_cart_switched(void);
 
 // Copy live globals into the inactive audio shadow buffer and flip the active
