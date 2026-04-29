@@ -502,9 +502,11 @@ All multi-byte integers are little-endian.
 | 8 | _N_ B | Metadata block (raw text, ignored by runtime) |
 | 8+_N_ | 1 B | Array literal count (0–🔲) |
 | … | … | Array literal table: for each entry: `[len: u8][elements: len bytes]` (char codes; null-terminated; last byte is always `0`) |
+| … | 1 B | Array declaration count (0–🔲) |
+| … | … | Array declaration table: for each entry: `[size: u16 LE]` — declared element count of each mutable array, in declaration order |
 | … | 2 B | `init_off` — bytecode offset of `init()` body (`0xFFFF` = not defined) |
 | … | 2 B | `update_off` |
-| … | 1 B | `update` `frame` parameter slot (global variable index, `0xFF` = not bound) |
+| … | 1 B | `update` `frame` parameter slot (scalar variable slot, `0xFF` = not bound) |
 | … | 1 B | `update` `input` parameter slot |
 | … | 2 B | `draw_off` |
 | … | 1 B | `draw` `frame` parameter slot |
@@ -515,7 +517,7 @@ All multi-byte integers are little-endian.
 
 Entry-point offsets are byte offsets from the start of the bytecode stream. All four entry-point records (init, update, draw, audio) are always present in the header; unused ones are set to `0xFFFF`.
 
-**Parameter slots:** each lifecycle function that accepts parameters (`update(frame, input)`, `draw(frame, input)`, `audio(t)`) declares the global variable slots those parameters are bound to. Before executing the function, the runtime writes the argument values into those slots. A slot of `0xFF` means the parameter name is not referenced in the function body and requires no pre-assignment.
+**Parameter slots:** each lifecycle function that accepts parameters (`update(frame, input)`, `draw(frame, input)`, `audio(t)`) records the **scalar variable slot** (0–63) that each parameter name is bound to. Before executing the function, the runtime writes the argument values into those slots. A value of `0xFF` means the parameter name is not used in the function body and no pre-assignment is needed.
 
 #### Opcode set
 
@@ -524,9 +526,9 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 | Opcode | Hex | Operands | Description |
 |---|---|---|---|
 | `PUSH_INT` | `0x00` | `i32` | Push 32-bit integer constant |
-| `PUSH_ARR` | `0x01` | `u8` | Push read-only array literal reference by table index |
-| `LOAD` | `0x02` | `u8` | Push global variable by slot (0–63) |
-| `STORE` | `0x03` | `u8` | Pop → global variable slot |
+| `PUSH_ARR` | `0x01` | `u8 litidx` | Push read-only literal array reference; `litidx` indexes the array literal table |
+| `LOAD` | `0x02` | `u8 varidx` | Push scalar global variable; `varidx` is a **scalar slot** (0–63) |
+| `STORE` | `0x03` | `u8 varidx` | Pop → scalar global variable; `varidx` is a **scalar slot** (0–63) |
 | `ADD` | `0x10` | — | Pop b, pop a; push `a + b` |
 | `SUB` | `0x11` | — | Push `a - b` |
 | `MUL` | `0x12` | — | Push `a * b` |
@@ -547,9 +549,10 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 | `NOT` | `0x36` | — | Pop a; push `1` if `a == 0`, else `0`. Two in sequence normalise any value to `0` or `1`. |
 | `POP` | `0x40` | — | Discard top of stack |
 | `DUP` | `0x41` | — | Duplicate top of stack |
-| `ARR_GET` | `0x70` | `u8 slot` | Pop index; push element at that index from global array at `slot`. Pushes `0` if out of bounds. |
-| `ARR_SET` | `0x71` | `u8 slot` | Pop value (top), pop index (next); write value into global array at `slot` at that index. No-op if out of bounds. |
-| `ARR_LEN` | `0x72` | `u8 slot` | Push the declared length of the global array at `slot`. |
+| `ARR_GET` | `0x70` | `u8 arridx` | Pop index; push element at that index from mutable array `arridx` (array pool index). Pushes `0` if out of bounds. |
+| `ARR_SET` | `0x71` | `u8 arridx` | Pop value (top), pop index (next); write value into mutable array `arridx` at that index. No-op if out of bounds. |
+| `ARR_LEN` | `0x72` | `u8 arridx` | Push the declared element count of mutable array `arridx`. |
+| `PUSH_ARR_MUT` | `0x73` | `u8 arridx` | Push a mutable array reference; `arridx` indexes the array pool |
 | `JUMP` | `0x50` | `i16` | Unconditional relative jump |
 | `JUMP_T` | `0x51` | `i16` | Pop; jump if nonzero |
 | `JUMP_F` | `0x52` | `i16` | Pop; jump if zero |
@@ -557,6 +560,18 @@ The VM is a **stack-based interpreter**. Instructions use variable-width encodin
 | `PEEK_JUMP_F` | `0x54` | `i16` | Peek (no pop); jump if zero — used for `&&` short-circuit |
 | `CALL` | `0x60` | `u8 id`, `u8 argc` | Call built-in `id`; args pushed left-to-right; pops `argc` args; pushes return value unless void |
 | `RET` | `0xFF` | — | Return from lifecycle function |
+
+#### Index spaces
+
+The `u8` operands in the opcode set refer to **three distinct index spaces**, each resolved entirely at compile time. The runtime does not distinguish between them — it is the compiler's responsibility to emit only valid indices into the correct space.
+
+| Index space | Range | Used by | Resolves to |
+|---|---|---|---|
+| **Scalar variable slots** | `0`–`63` | `LOAD`, `STORE`, parameter slots in binary header | Entry in the global variable table |
+| **Array pool indices** | `0`–`ndecl−1` | `ARR_GET`, `ARR_SET`, `ARR_LEN`, `PUSH_ARR_MUT` | Entry in the mutable array pool (§6.3) |
+| **Array literal indices** | `0`–`nlit−1` | `PUSH_ARR` | Entry in the read-only literal table (§6.3) |
+
+A source-level name belongs to exactly one space, determined at its declaration point: a bare assignment (`x = …`) allocates a scalar slot; an explicit size declaration (`name[N]`) allocates an array pool entry. Using an array name where a scalar slot is expected, or vice versa, is a **compile error**. The runtime performs no cross-space validation.
 
 #### Compound assignment compilation
 
