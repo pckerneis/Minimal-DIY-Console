@@ -1,0 +1,6 @@
+{
+  "tasks": {
+    "test":  "deno test compiler.test.js",
+    "build": "deno compile --allow-read --allow-write --output bdcc cli.js"
+  }
+}

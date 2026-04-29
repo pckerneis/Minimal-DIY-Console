@@ -1,0 +1,449 @@
+// Bidule 01 compiler — unit tests
+// Run with: deno test compiler.test.js
+
+import { compile } from './compiler.js';
+
+// ─── Opcode constants (mirrors compiler.js OP table) ─────────────────────────
+
+const OP = {
+  PUSH_INT: 0x00, PUSH_ARR: 0x01, LOAD: 0x02, STORE: 0x03,
+  ADD: 0x10, SUB: 0x11, MUL: 0x12, DIV: 0x13, MOD: 0x14, NEG: 0x15,
+  BAND: 0x20, BOR: 0x21, BXOR: 0x22, SHL: 0x23, SHR: 0x24,
+  EQ: 0x30, NE: 0x31, LT: 0x32, LE: 0x33, GT: 0x34, GE: 0x35, NOT: 0x36,
+  POP: 0x40, DUP: 0x41,
+  JUMP: 0x50, JUMP_T: 0x51, JUMP_F: 0x52, PEEK_JUMP_T: 0x53, PEEK_JUMP_F: 0x54,
+  CALL: 0x60,
+  ARR_GET: 0x70, ARR_SET: 0x71, ARR_LEN: 0x72, PUSH_ARR_MUT: 0x73,
+  RET: 0xFF,
+};
+
+// ─── Binary parser ────────────────────────────────────────────────────────────
+
+function parseBinary(bin) {
+  let p = 0;
+  const r8  = () => bin[p++];
+  const r16 = () => { const v = bin[p] | (bin[p + 1] << 8); p += 2; return v; };
+  const rN  = (n) => { const s = bin.slice(p, p + n); p += n; return s; };
+
+  const magic   = String.fromCharCode(...rN(4));
+  const version = r8();
+  r8(); // flags (reserved)
+  const meta = new TextDecoder().decode(rN(r16()));
+
+  const arrLitCount = r8();
+  const arrLits = [];
+  for (let i = 0; i < arrLitCount; i++) arrLits.push([...rN(r8())]);
+
+  const arrDeclCount = r8();
+  const arrDecls = [];
+  for (let i = 0; i < arrDeclCount; i++) arrDecls.push(r16());
+
+  const initOff         = r16();
+  const updateOff       = r16();
+  const updateFrameSlot = r8();
+  const updateInputSlot = r8();
+  const drawOff         = r16();
+  const drawFrameSlot   = r8();
+  const drawInputSlot   = r8();
+  const audioOff        = r16();
+  const audioTSlot      = r8();
+
+  return {
+    magic, version, meta, arrLits, arrDecls,
+    entryPoints: { init: initOff, update: updateOff, draw: drawOff, audio: audioOff },
+    paramSlots: {
+      updateFrame: updateFrameSlot, updateInput: updateInputSlot,
+      drawFrame: drawFrameSlot, drawInput: drawInputSlot,
+      audioT: audioTSlot,
+    },
+    bytecode: bin.slice(p),
+  };
+}
+
+// ─── Bytecode disassembler ────────────────────────────────────────────────────
+
+function disassemble(bytes) {
+  const instrs = [];
+  let ip = 0;
+  while (ip < bytes.length) {
+    const op = bytes[ip++];
+    let operands = [];
+    switch (op) {
+      case OP.PUSH_INT:
+        operands = [(bytes[ip] | (bytes[ip+1]<<8) | (bytes[ip+2]<<16) | (bytes[ip+3]<<24)) | 0];
+        ip += 4;
+        break;
+      case OP.PUSH_ARR: case OP.LOAD: case OP.STORE:
+      case OP.ARR_GET:  case OP.ARR_SET: case OP.ARR_LEN: case OP.PUSH_ARR_MUT:
+        operands = [bytes[ip++]];
+        break;
+      case OP.JUMP: case OP.JUMP_T:      case OP.JUMP_F:
+      case OP.PEEK_JUMP_T: case OP.PEEK_JUMP_F:
+        operands = [((bytes[ip] | (bytes[ip + 1] << 8)) << 16) >> 16];
+        ip += 2;
+        break;
+      case OP.CALL:
+        operands = [bytes[ip++], bytes[ip++]];
+        break;
+      default: break;
+    }
+    instrs.push({ op, operands });
+    if (op === OP.RET) break;
+  }
+  return instrs;
+}
+
+// ─── Test helpers ─────────────────────────────────────────────────────────────
+
+const compilesOk = (src) => compile(src).errors.length === 0;
+const errorsOf   = (src) => compile(src).errors;
+const warningsOf = (src) => compile(src).warnings;
+
+function getBinary(src) {
+  const { binary, errors } = compile(src);
+  if (errors.length) throw new Error(errors.join('; '));
+  return parseBinary(binary);
+}
+
+function opsOf(src, fn = 'draw') {
+  const b   = getBinary(src);
+  const off = b.entryPoints[fn];
+  if (off === 0xFFFF) throw new Error(`'${fn}' not defined in binary`);
+  return disassemble(b.bytecode.slice(off));
+}
+
+const hasOp = (src, opcode, fn = 'draw') => opsOf(src, fn).some(i => i.op === opcode);
+const wrap  = (body) => `draw(f) { ${body} }`;
+
+function eq(a, b, msg) {
+  if (a !== b) throw new Error(msg ?? `expected ${JSON.stringify(a)}, got ${JSON.stringify(b)}`);
+}
+function ok(v, msg) {
+  if (!v) throw new Error(msg ?? `expected truthy, got ${JSON.stringify(v)}`);
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+Deno.test('Compilation basics', async (t) => {
+  await t.step('empty program compiles without errors', () => {
+    ok(compilesOk(''));
+  });
+
+  await t.step('missing @id produces a warning containing "id"', () => {
+    ok(warningsOf('draw(f){}').some(m => m.includes('id')));
+  });
+
+  await t.step('unknown top-level token is a compile error', () => {
+    ok(errorsOf('42').length > 0);
+  });
+
+  await t.step('minimal valid program compiles clean', () => {
+    ok(compilesOk('// @id test\ndraw(f) { x = 1 }'));
+  });
+});
+
+Deno.test('Binary structure', async (t) => {
+  await t.step('magic bytes are BDBN', () => {
+    eq(getBinary('').magic, 'BDBN');
+  });
+
+  await t.step('format version is 1', () => {
+    eq(getBinary('').version, 1);
+  });
+
+  await t.step('undefined lifecycle function has offset 0xFFFF', () => {
+    eq(getBinary('').entryPoints.draw, 0xFFFF);
+  });
+
+  await t.step('defined lifecycle function has offset != 0xFFFF', () => {
+    ok(getBinary('draw(f){}').entryPoints.draw !== 0xFFFF);
+  });
+
+  await t.step('"hi" encoded as null-terminated char codes in arrLits', () => {
+    const b = getBinary('draw(f){ print("hi", 0, 0, 1) }');
+    const lit = b.arrLits.find(l => l[0] === 104);
+    ok(lit, 'literal "hi" not found in arrLits');
+    eq(lit[0], 104); // 'h'
+    eq(lit[1], 105); // 'i'
+    eq(lit[2], 0);   // null terminator
+  });
+
+  await t.step('array declaration size appears in arrDecls', () => {
+    const b = getBinary('buf[8]\ndraw(f){}');
+    eq(b.arrDecls.length, 1);
+    eq(b.arrDecls[0], 8);
+  });
+});
+
+Deno.test('Scalar variables', async (t) => {
+  await t.step('assignment emits STORE', () => {
+    ok(hasOp(wrap('x = 1'), OP.STORE));
+  });
+
+  await t.step('variable read emits LOAD', () => {
+    ok(hasOp(wrap('y = x + 1'), OP.LOAD));
+  });
+
+  await t.step('compound += emits LOAD then ADD then STORE', () => {
+    const instrs = opsOf(wrap('x += 3'));
+    ok(instrs.some(i => i.op === OP.LOAD));
+    ok(instrs.some(i => i.op === OP.ADD));
+    ok(instrs.some(i => i.op === OP.STORE));
+  });
+
+  await t.step('64 variables compile without error', () => {
+    const body = Array.from({ length: 64 }, (_, i) => `v${i} = 0`).join('\n');
+    ok(compilesOk(`draw() { ${body} }`));  // no param so all 64 slots are available
+  });
+
+  await t.step('65th variable is a compile error', () => {
+    const body = Array.from({ length: 65 }, (_, i) => `v${i} = 0`).join('\n');
+    ok(errorsOf(`draw() { ${body} }`).length > 0);
+  });
+});
+
+Deno.test('Arrays', async (t) => {
+  await t.step('declaration size is recorded in arrDecls', () => {
+    const b = getBinary('nums[16]\ndraw(f){}');
+    eq(b.arrDecls[0], 16);
+  });
+
+  await t.step('element read emits ARR_GET', () => {
+    ok(hasOp('arr[4]\ndraw(f){ x = arr[0] }', OP.ARR_GET));
+  });
+
+  await t.step('element write emits ARR_SET', () => {
+    ok(hasOp('arr[4]\ndraw(f){ arr[0] = 1 }', OP.ARR_SET));
+  });
+
+  await t.step('compound element assignment emits DUP + ARR_GET + op + ARR_SET', () => {
+    const instrs = opsOf('arr[4]\ndraw(f){ arr[0] += 1 }');
+    ok(instrs.some(i => i.op === OP.DUP));
+    ok(instrs.some(i => i.op === OP.ARR_GET));
+    ok(instrs.some(i => i.op === OP.ADD));
+    ok(instrs.some(i => i.op === OP.ARR_SET));
+  });
+
+  await t.step('.length emits ARR_LEN', () => {
+    ok(hasOp('arr[4]\ndraw(f){ x = arr.length }', OP.ARR_LEN));
+  });
+
+  await t.step('bare array name in expression emits PUSH_ARR_MUT', () => {
+    ok(hasOp('arr[4]\ndraw(f){ print(arr, 0, 0, 1) }', OP.PUSH_ARR_MUT));
+  });
+
+  await t.step('element access on undeclared array is a compile error', () => {
+    ok(errorsOf('draw(f){ x = ghost[0] }').length > 0);
+  });
+
+  await t.step('17th array declaration is a compile error', () => {
+    const decls = Array.from({ length: 17 }, (_, i) => `a${i}[4]`).join('\n');
+    ok(errorsOf(`${decls}\ndraw(f){}`).length > 0);
+  });
+});
+
+Deno.test('String literals', async (t) => {
+  await t.step('string literal emits PUSH_ARR', () => {
+    ok(hasOp('draw(f){ print("hi", 0, 0, 1) }', OP.PUSH_ARR));
+  });
+
+  await t.step('"hi" stored as [h=104, i=105, null=0] in arrLits', () => {
+    const b   = getBinary('draw(f){ print("hi", 0, 0, 1) }');
+    const lit = b.arrLits.find(l => l[0] === 104);
+    ok(lit, 'literal not found');
+    eq(lit[0], 104); eq(lit[1], 105); eq(lit[2], 0);
+  });
+
+  await t.step('empty string "" stored as [null=0] in arrLits', () => {
+    const b = getBinary('draw(f){ print("", 0, 0, 1) }');
+    ok(b.arrLits.some(l => l.length === 1 && l[0] === 0));
+  });
+
+  await t.step('duplicate string literals are deduplicated to one entry', () => {
+    const b = getBinary('draw(f){ print("ab", 0, 0, 1)\nprint("ab", 0, 10, 1) }');
+    eq(b.arrLits.length, 1);
+  });
+});
+
+Deno.test('Char literals', async (t) => {
+  await t.step("'A' compiles to PUSH_INT 65", () => {
+    const pi = opsOf(wrap("x = 'A'")).find(i => i.op === OP.PUSH_INT);
+    eq(pi?.operands[0], 65);
+  });
+
+  await t.step("'0' compiles to PUSH_INT 48", () => {
+    ok(opsOf(wrap("x = '0'")).some(i => i.op === OP.PUSH_INT && i.operands[0] === 48));
+  });
+
+  await t.step("'\\\\' (backslash escape) compiles to PUSH_INT 92", () => {
+    ok(opsOf(wrap("x = '\\\\'")).some(i => i.op === OP.PUSH_INT && i.operands[0] === 92));
+  });
+
+  await t.step("'\\'' (single-quote escape) compiles to PUSH_INT 39", () => {
+    ok(opsOf(wrap("x = '\\''")).some(i => i.op === OP.PUSH_INT && i.operands[0] === 39));
+  });
+});
+
+Deno.test('Control flow', async (t) => {
+  await t.step('if emits JUMP_F', () => {
+    ok(hasOp(wrap('if (x) { y = 1 }'), OP.JUMP_F));
+  });
+
+  await t.step('if/else emits both JUMP_F and JUMP', () => {
+    const instrs = opsOf(wrap('if (x) { y = 1 } else { y = 2 }'));
+    ok(instrs.some(i => i.op === OP.JUMP_F));
+    ok(instrs.some(i => i.op === OP.JUMP));
+  });
+
+  await t.step('while emits JUMP_F (exit) and JUMP (back-edge)', () => {
+    const instrs = opsOf(wrap('while (x) { x -= 1 }'));
+    ok(instrs.some(i => i.op === OP.JUMP_F));
+    ok(instrs.some(i => i.op === OP.JUMP));
+  });
+
+  await t.step('for loop compiles without error', () => {
+    ok(compilesOk(wrap('for (i = 0; i < 10; i++) { x = i }')));
+  });
+
+  await t.step('break outside loop is a compile error', () => {
+    ok(errorsOf(wrap('break')).length > 0);
+  });
+
+  await t.step('continue outside loop is a compile error', () => {
+    ok(errorsOf(wrap('continue')).length > 0);
+  });
+
+  await t.step('break inside while emits an unconditional JUMP', () => {
+    ok(hasOp(wrap('while (1) { break }'), OP.JUMP));
+  });
+});
+
+Deno.test('Expressions', async (t) => {
+  await t.step('arithmetic operators emit correct opcodes', () => {
+    ok(hasOp(wrap('x = 1 + 2'), OP.ADD));
+    ok(hasOp(wrap('x = 1 - 2'), OP.SUB));
+    ok(hasOp(wrap('x = 1 * 2'), OP.MUL));
+    ok(hasOp(wrap('x = 1 / 2'), OP.DIV));
+    ok(hasOp(wrap('x = 1 % 2'), OP.MOD));
+  });
+
+  await t.step('unary minus emits NEG', () => {
+    ok(hasOp(wrap('x = -y'), OP.NEG));
+  });
+
+  await t.step('bitwise operators emit correct opcodes', () => {
+    ok(hasOp(wrap('x = a & b'),  OP.BAND));
+    ok(hasOp(wrap('x = a | b'),  OP.BOR));
+    ok(hasOp(wrap('x = a ^ b'),  OP.BXOR));
+    ok(hasOp(wrap('x = a << 1'), OP.SHL));
+    ok(hasOp(wrap('x = a >> 1'), OP.SHR));
+  });
+
+  await t.step('comparison operators emit correct opcodes', () => {
+    ok(hasOp(wrap('x = a == b'), OP.EQ));
+    ok(hasOp(wrap('x = a != b'), OP.NE));
+    ok(hasOp(wrap('x = a < b'),  OP.LT));
+    ok(hasOp(wrap('x = a <= b'), OP.LE));
+    ok(hasOp(wrap('x = a > b'),  OP.GT));
+    ok(hasOp(wrap('x = a >= b'), OP.GE));
+  });
+
+  await t.step('&& emits PEEK_JUMP_F for short-circuit evaluation', () => {
+    ok(hasOp(wrap('if (a && b) { x = 1 }'), OP.PEEK_JUMP_F));
+  });
+
+  await t.step('|| emits PEEK_JUMP_T for short-circuit evaluation', () => {
+    ok(hasOp(wrap('if (a || b) { x = 1 }'), OP.PEEK_JUMP_T));
+  });
+
+  await t.step('&& and || normalise result with NOT NOT', () => {
+    ok(hasOp(wrap('x = a && b'), OP.NOT));
+    ok(hasOp(wrap('x = a || b'), OP.NOT));
+  });
+});
+
+Deno.test('Builtins', async (t) => {
+  await t.step('known builtin emits CALL', () => {
+    ok(hasOp(wrap('cls(0)'), OP.CALL));
+  });
+
+  await t.step('print emits CALL with builtin id 6', () => {
+    const call = opsOf(wrap('print("x", 0, 0, 1)')).find(i => i.op === OP.CALL);
+    eq(call?.operands[0], 6);
+    eq(call?.operands[1], 4); // 4 args
+  });
+
+  await t.step('streq emits CALL with id 13 and argc 2', () => {
+    const call = opsOf('buf[4]\ndraw(f){ x = streq(buf, "hi") }')
+      .find(i => i.op === OP.CALL && i.operands[0] === 13);
+    ok(call, 'CALL 13 not found');
+    eq(call.operands[1], 2);
+  });
+
+  await t.step('arreq emits CALL with id 14 and argc 3', () => {
+    const call = opsOf('a[4]\nb[4]\ndraw(f){ x = arreq(a, b, 4) }')
+      .find(i => i.op === OP.CALL && i.operands[0] === 14);
+    ok(call, 'CALL 14 not found');
+    eq(call.operands[1], 3);
+  });
+
+  await t.step('cartmeta with 3 args compiles clean', () => {
+    ok(compilesOk('buf[32]\ndraw(f){ cartmeta(0, "id", buf) }'));
+  });
+
+  await t.step('cartmeta with 2 args is a compile error', () => {
+    ok(errorsOf('draw(f){ cartmeta(0, "id") }').length > 0);
+  });
+
+  await t.step('unknown function is a compile error', () => {
+    ok(errorsOf(wrap('foo(1)')).length > 0);
+  });
+
+  await t.step('wrong argument count is a compile error', () => {
+    ok(errorsOf(wrap('cls(0, 1)')).length > 0);
+  });
+
+  await t.step('audio-restricted builtin inside audio() is a compile error', () => {
+    ok(errorsOf('audio(t){ cls(0) }').length > 0);
+  });
+
+  await t.step('audio-safe builtin inside audio() is allowed', () => {
+    ok(compilesOk('audio(t){ abs(t) }'));
+  });
+});
+
+Deno.test('Lifecycle functions', async (t) => {
+  await t.step('all four lifecycle functions get valid bytecode offsets', () => {
+    const b = getBinary('init(){} update(f,i){} draw(f,i){} audio(t){}');
+    ok(b.entryPoints.init   !== 0xFFFF);
+    ok(b.entryPoints.update !== 0xFFFF);
+    ok(b.entryPoints.draw   !== 0xFFFF);
+    ok(b.entryPoints.audio  !== 0xFFFF);
+  });
+
+  await t.step('update frame and input get distinct, bound parameter slots', () => {
+    const s = getBinary('update(frame, input){}').paramSlots;
+    ok(s.updateFrame !== 0xFF);
+    ok(s.updateInput !== 0xFF);
+    ok(s.updateFrame !== s.updateInput);
+  });
+
+  await t.step('draw frame and input get distinct, bound parameter slots', () => {
+    const s = getBinary('draw(frame, input){}').paramSlots;
+    ok(s.drawFrame !== 0xFF);
+    ok(s.drawInput !== 0xFF);
+    ok(s.drawFrame !== s.drawInput);
+  });
+
+  await t.step('audio t parameter slot is bound', () => {
+    ok(getBinary('audio(t){}').paramSlots.audioT !== 0xFF);
+  });
+
+  await t.step('duplicate lifecycle function definition is a compile error', () => {
+    ok(errorsOf('draw(f){} draw(f){}').length > 0);
+  });
+
+  await t.step('variable assignment inside audio() is a compile error', () => {
+    ok(errorsOf('audio(t){ x = 1 }').length > 0);
+  });
+});
