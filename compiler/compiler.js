@@ -152,7 +152,7 @@ function lex(src) {
 
     // Two-character operators (must be checked before single-char)
     const two = src.slice(i, i + 2);
-    if (['+=', '-=', '*=', '/=', '==', '!=', '>=', '<=', '&&', '||', '>>', '<<', '++', '--'].includes(two)) {
+    if (['+=', '-=', '*=', '/=', '%=', '==', '!=', '>=', '<=', '&&', '||', '>>', '<<', '++', '--'].includes(two)) {
       tokens.push({ type: 'OP', value: two, line });
       i += 2;
       continue;
@@ -322,7 +322,7 @@ class Parser {
     if (t.type === 'IDENT') {
       const next = this.tok[this.pos + 1] || {};
       const isArrayAssign = next.type === 'OP' && next.value === '[';
-      const isAssign      = next.type === 'OP' && ['=', '+=', '-=', '*=', '/='].includes(next.value);
+      const isAssign      = next.type === 'OP' && ['=', '+=', '-=', '*=', '/=', '%='].includes(next.value);
       const isIncr        = next.type === 'OP' && ['++', '--'].includes(next.value);
       const isCall        = next.type === 'OP' && next.value === '(';
       if (isArrayAssign) return this.parseArrayAssign();
@@ -383,6 +383,7 @@ class Parser {
         case '-=': this.e.emit(OP.SUB); break;
         case '*=': this.e.emit(OP.MUL); break;
         case '/=': this.e.emit(OP.DIV); break;
+        case '%=': this.e.emit(OP.MOD); break;
       }
     }
     this.e.emit(OP.STORE, slot);
@@ -413,6 +414,7 @@ class Parser {
         case '-=': this.e.emit(OP.SUB); break;
         case '*=': this.e.emit(OP.MUL); break;
         case '/=': this.e.emit(OP.DIV); break;
+        case '%=': this.e.emit(OP.MOD); break;
       }
     } else {
       this.parseExpr();

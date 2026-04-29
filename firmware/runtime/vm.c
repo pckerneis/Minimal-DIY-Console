@@ -15,7 +15,7 @@
 #define MAX_ARR_LITS    32
 #define MAX_ARR_LIT_LEN 128
 #define MAX_ARR_DECLS   16
-#define MAX_ARR_ELEMS   128
+#define MAX_ARR_ELEMS   256
 
 // ─── Value ───────────────────────────────────────────────────────────────────
 

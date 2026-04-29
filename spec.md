@@ -50,14 +50,16 @@ Key properties:
 
 ### 2.2 Grammar
 
-🔲 _TODO_
-
 ```
-program      := statement*
-statement    := array_decl | assignment | array_assign | incr_stmt | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | call_stmt
-array_decl   := IDENT '[' NUMBER ']'
-assignment   := IDENT ('=' | '+=' | '-=' | '*=' | '/=') expr
-array_assign := IDENT '[' expr ']' ('=' | '+=' | '-=' | '*=' | '/=') expr
+program    := top_level*
+top_level  := array_decl | fn_def
+fn_def     := IDENT '(' param_list ')' block
+param_list := (IDENT (',' IDENT)*)?
+array_decl := IDENT '[' NUMBER ']'
+
+statement    := assignment | array_assign | incr_stmt | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt | call_stmt
+assignment   := IDENT ('=' | '+=' | '-=' | '*=' | '/=' | '%=') expr
+array_assign := IDENT '[' expr ']' ('=' | '+=' | '-=' | '*=' | '/=' | '%=') expr
 incr_stmt    := IDENT ('++' | '--') | ('++' | '--') IDENT
 if_stmt      := 'if' '(' expr ')' block ( 'else' block )?
 while_stmt   := 'while' '(' expr ')' block
@@ -128,7 +130,7 @@ From highest to lowest:
 - Variable names: ASCII letters, digits, and `_`; must start with a letter or `_`.
 - Maximum of **64 simultaneous global variables** per cart.
 
-Assignment operators: `=` `+=` `-=` `*=` `/=`
+Assignment operators: `=` `+=` `-=` `*=` `/=` `%=`
 
 Increment/decrement: `++` `--` (statement form only; both prefix `++i` and postfix `i++` are equivalent and do not return a value)
 
@@ -245,7 +247,7 @@ User-defined functions beyond these four are not supported in v1.
 
 ### 3.1 Conventions
 
-- `c` is a colour value: `0` = black (off), `1` = white (on).
+- `c` is a colour value: `0` = black (off), any non-zero value = white (on). The canonical white value is `1`.
 - `x`, `y` are pixel coordinates. Origin is the **top-left corner** of the screen. X increases rightward, Y increases downward.
 - Screen bounds: `x` ∈ [0, 127], `y` ∈ [0, 63].
 - Drawing outside screen bounds is silently ignored (clipped).
@@ -294,7 +296,7 @@ Draw a filled rectangle. `(x, y)` is the top-left corner; `w` and `h` are width 
 ```
 line(x0, y0, x1, y1, c)
 ```
-Draw a line from `(x0, y0)` to `(x1, y1)`.
+Draw a line from `(x0, y0)` to `(x1, y1)` using Bresenham's line algorithm. Both endpoints are included.
 
 ```
 print(text, x, y, c)
@@ -304,7 +306,7 @@ Render `text` starting at pixel `(x, y)` in colour `c` on a single line (no text
 - If `text` is an integer, it is converted to its decimal representation before rendering.
 - If `text` is an array reference (including an inline string literal), elements are interpreted as char codes and rendered until a `0` (null terminator) is encountered or the end of the array is reached.
 
-- Font: **Monogram** by Datagoblin. Glyph cell is 5×5px for lowercase, with a 2px ascender zone and 2px descender zone, giving a full character height of 9px. Full ASCII printable range supported.
+- Font: **Monogram** by Datagoblin. Each character occupies a **6 px** horizontal cell (5 px glyph + 1 px gap); the full character height is **9 px** (5 px body + 2 px ascender zone + 2 px descender zone). A string of _n_ characters therefore renders into _n_ × 6 pixels wide. Full ASCII printable range (codes 32–126) supported.
 - Characters rendered outside screen bounds are silently clipped.
 
 ### 3.4 Math Utilities
@@ -414,6 +416,19 @@ loadcart(i)              // if cart at index exists, exit current cart and load 
 
 `field` is an array reference (typically an inline string literal) naming the metadata key. The value is written into `arr` as null-terminated char codes; `arr` must be large enough to hold the result.
 
+### 3.8 Array Comparison
+
+```
+streq(a, b)        → integer
+arreq(a, b, len)   → integer
+```
+
+`streq(a, b)` compares two null-terminated integer sequences element by element. Returns `1` if both sequences contain the same elements up to and including the first `0`, `0` otherwise. `a` and `b` may be mutable or literal array references. Out-of-bounds reads return `0`, so a shorter array naturally compares unequal to a longer one at the point the short one ends. Comparison is capped at `MAX_ARR_ELEMS + 1` iterations as a safeguard against arrays with no null terminator.
+
+`arreq(a, b, len)` compares exactly `len` elements of `a` and `b`. Returns `1` if all `len` elements are equal, `0` otherwise. A `len` of `0` always returns `1`.
+
+Both functions are primarily intended for comparing char-code arrays (e.g. the result of `cartmeta()` against a string literal).
+
 ---
 
 ## 4. Cartridge Format
@@ -481,7 +496,7 @@ Unknown `@keys` are ignored by the runtime.
 
 - Maximum cart **source** size: **65 536 bytes** (64 KB).
 - Maximum compiled **bytecode** size: **16 384 bytes** (16 KB).
-- Maximum unique **array literals** per cart: 🔲 _TBD (see §6.3)._
+- Maximum unique **array literals** per cart: **32** (see §6.3).
 
 ### 4.6 Compiled Cart Format
 
@@ -575,7 +590,7 @@ A source-level name belongs to exactly one space, determined at its declaration 
 
 #### Compound assignment compilation
 
-Compound assignments (`+=`, `-=`, `*=`, `/=`) on scalar variables compile to `LOAD slot` + arithmetic opcode + `STORE slot`. No dedicated compound-assignment opcodes exist.
+Compound assignments (`+=`, `-=`, `*=`, `/=`, `%=`) on scalar variables compile to `LOAD slot` + arithmetic opcode + `STORE slot`. No dedicated compound-assignment opcodes exist.
 
 `++` and `--` (both prefix and postfix forms) compile identically to `LOAD slot` + `PUSH_INT 1` + `ADD`/`SUB` + `STORE slot`.
 
@@ -709,16 +724,35 @@ Example: `input & 1` tests Left; `input & 16` tests A. `btn()` and `btnp()` rema
  
 ### 5.4 Error Handling
 
-🔲 _TBD. Example:_
-- **Parse error at boot:** Display error message with line number; halt.
-- **Runtime error:** Display error message with call stack and line number; halt.
-- **Stack overflow:** 🔲 _TBD._
+**Load-time error** (binary fails validation): display an error message and halt. The cart is not executed.
+
+**Runtime error in `update()` or `draw()`**: halt execution immediately. Display an error message on screen; the framebuffer may be partially written at the point of the error. The error message must include at minimum a short description. The device remains halted until reset.
+
+**Runtime error in `audio(t)`**: return `128` (silence) for the current sample. The error is silently swallowed and `audio(t)` continues to be called normally on subsequent samples. This prevents an audio bug from crashing a running cart.
+
+**Stack overflow**: treated as a runtime error under the rules above (halt for `update()`/`draw()`, silence for `audio(t)`).
+
+**Emulator divergence**: emulators may display error details (source line, opcode, stack trace) that the firmware cannot. The halting/silence contract must match.
 
 ### 5.5 Display
 
 - Resolution: **128 × 64 pixels**, 1-bit colour (monochrome).
 - The framebuffer is written during `draw()` and flushed to the screen after `draw()` returns.
 - Graphics calls (`pset`, `rectfill`, etc.) are permitted outside of `draw()` (e.g. inside `update()`). They write to the framebuffer immediately but the result will not be visible until the next flush.
+
+### 5.6 Emulator Notes
+
+A web or desktop emulator implements the same cart/runtime contract without the RP2040-specific subsystems. The following platform substitutions apply.
+
+**Persistence:** Use `localStorage` keyed by `bidule01:<cartId>` where `<cartId>` is the cart's `@id` field. Each entry stores the four save-slot integers as a JSON array. An absent entry is equivalent to a never-written save block (`load()` returns `0`).
+
+**Audio:** Implement `audio(t)` via the Web Audio API `AudioWorklet`. The worklet requests samples at the context sample rate and calls `audio(t)` once per sample, clamping the return value to [0, 255] and mapping it to a float in [−1, 1] for output. If `audio(t)` throws, output `0.0` (silence) for that sample and continue. The worklet maintains its own `t` counter independent of the main thread.
+
+**Cart filesystem:** The emulator maintains a virtual cart list in memory, populated by an in-page file picker (`<input type="file" accept=".bdb">`). The virtual list persists for the browser session. `cartcount()` returns the number of loaded carts; `cartmeta()` reads from the binary metadata block of the cart at the given index; `loadcart()` switches the active cart. The UI must also provide a way to remove individual carts from the list.
+
+**Frame timing:** The emulator targets 30 fps using `setInterval` or `requestAnimationFrame`. `setInterval` at 33 ms is acceptable. Frame skipping is not required.
+
+**Audio shadow copy:** The shadow-copy mechanism (§5.3) is not needed in a single-threaded emulator. The worklet may read cart globals directly, accepting the risk of occasional torn reads (acceptable given the low stakes in an emulator context).
 
 ---
 
@@ -735,14 +769,14 @@ The RP2040 provides **264 KB SRAM** total.
 |---|---|---|
 | Firmware / runtime | ~100 KB | Interpreter, built-ins, USB stack, SDK |
 | Cart bytecode buffer | 16 KB | Compiled cart loaded from flash |
-| Array literal table | 🔲 TBD | Read-only arrays from string literals |
-| Global variable table (live + 2 audio shadows) | ~768 B | 3 × 64 vars × 4 bytes (integers only; no type tags) |
-| Global array pool | 🔲 TBD | Mutable arrays declared by the cart |
+| Array literal table | ~4 KB | 32 literals × 129 bytes (128 chars + null) |
+| Global variable table (live + 2 audio shadows) | ~768 B | 3 × 64 vars × 4 bytes |
+| Global array pool | ~16 KB | 16 arrays × 256 elements × 4 bytes |
 | Framebuffer | 1 KB | 128×64 × 1 bit (8 pages × 128 bytes) |
 | Evaluation stacks | ~512 B | 2 × 32 slots — core 0 and core 1 |
-| Free / reserved | remainder | |
+| Free / reserved | ~142 KB | |
 
-🔲 _Total budget pending finalisation of array pool limits._
+Total consumed ≈ ~122 KB, leaving ~142 KB free.
 
 ### 6.2 Variable Table
 
@@ -756,7 +790,14 @@ All arrays are globally declared and statically sized. The runtime maintains two
 
 **Global array pool (mutable):** Arrays declared with `name[N]` syntax are allocated in declaration order from a flat mutable pool. All elements are initialised to `0` at cart load time. The pool is a contiguous block of integer storage subdivided at compile time — no dynamic allocation occurs.
 
-🔲 _Fixed limits (max total arrays including literals, max elements per array, total pool size in integers) are TBD and will be exposed as named constants in the language._
+**Fixed limits:**
+
+| Limit | Value |
+|---|---|
+| Max unique array literals per cart | **32** |
+| Max chars per literal (excl. null terminator) | **128** |
+| Max mutable array declarations per cart | **16** |
+| Max elements per mutable array | **256** |
 
 Arrays are **not** included in the variable table shadow copies (§6.2). Array data is shared between core 0 and core 1 without synchronisation. Carts must avoid writing to arrays from `audio(t)` to prevent torn reads.
 
@@ -831,9 +872,5 @@ Remaining decisions before this spec is considered stable.
 
 | # | Section | Question |
 |---|---|---|
-| 1 | 5.4 | Runtime error behaviour (parse errors, runtime errors, stack overflow) |
-| 2 | 7.1 | Clock speed — default 125 MHz or overclocked? |
-| 3 | 7.4 | RC filter values for audio output |
-| 4 | 2.8 / 6.3 | Array limits: max array count, max elements per array, total pool size (to be defined as named constants) |
-| 5 | 2.8 | Maximum string literal length |
-| 6 | 6.3 | Does `.length` on a string literal include the null terminator? |
+| 1 | 7.1 | Clock speed — default 125 MHz or overclocked? |
+| 2 | 7.4 | RC filter values for audio output |

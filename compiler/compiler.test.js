@@ -191,6 +191,10 @@ Deno.test('Scalar variables', async (t) => {
     ok(instrs.some(i => i.op === OP.STORE));
   });
 
+  await t.step('compound %= emits MOD', () => {
+    ok(hasOp(wrap('x %= 3'), OP.MOD));
+  });
+
   await t.step('64 variables compile without error', () => {
     const body = Array.from({ length: 64 }, (_, i) => `v${i} = 0`).join('\n');
     ok(compilesOk(`draw() { ${body} }`));  // no param so all 64 slots are available
